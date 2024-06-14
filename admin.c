@@ -461,8 +461,16 @@ static void __nvmev_admin_set_features(int eid)
 	struct nvme_features *cmd = &sq_entry(eid).features;
 	__le32 result0 = 0;
 	__le32 result1 = 0;
+#ifdef FDP_SIMULATOR
+	NVMEV_INFO("%s:  save: 0x%x feature id: 0x%x\n", 
+				__func__, 
+				NVME_GET(cmd->fid ,SET_FEATURES_CDW10_SAVE), 
+				NVME_GET(cmd->fid ,FEATURES_CDW10_FID));
 
+	switch (NVME_GET(cmd->fid, FEATURES_CDW10_FID)) {
+#elif
 	switch (cmd->fid) {
+#endif //FDP_SIMULATOR
 	case NVME_FEAT_ARBITRATION:
 	case NVME_FEAT_POWER_MGMT:
 	case NVME_FEAT_LBA_RANGE:
@@ -493,6 +501,31 @@ static void __nvmev_admin_set_features(int eid)
 	case NVME_FEAT_HOST_ID:
 	case NVME_FEAT_RESV_MASK:
 	case NVME_FEAT_RESV_PERSIST:
+#ifdef FDP_SIMULATOR
+		break;
+	case NVME_FEAT_FDP:
+		int endg_id;
+		int fdp_config_idx;
+		bool fdp_enable;
+
+		if (!NVME_GET(cmd->fid ,SET_FEATURES_CDW10_SAVE)) {
+			result0 = 0;
+			result1 = 0;
+			break;
+		}
+
+		endg_id = (sq_entry(eid).features.dword11 & 0xFFFF);
+		fdp_config_idx = ((sq_entry(eid).features.rsvd12[0] >> 8)  & 0xFFFF);
+		fdp_enable = (sq_entry(eid).features.rsvd12[0]  & 0xF);
+
+		nvmev_vdev->eg[endg_id].fdp_enable = fdp_enable;
+		result0 = 0;
+		result1 = 1;
+		//result0 = ((nvmev_vdev->nr_cq - 1) << 16 | (nvmev_vdev->nr_sq - 1));
+		NVMEV_INFO("%s: NVME_FEAT_FDP  endg_id: %d fdp_config_idx: %d fdp_enable: %d\n", 
+				__func__, endg_id, fdp_config_idx, nvmev_vdev->eg[endg_id].fdp_enable);
+
+#endif //FDP_SIMULATOR
 	default:
 		break;
 	}
@@ -507,7 +540,16 @@ static void __nvmev_admin_get_features(int eid)
 	__le32 result0 = 0;
 	__le32 result1 = 0;
 
+#ifdef FDP_SIMULATOR
+	NVMEV_INFO("%s:  save: 0x%x feature id: 0x%x\n", 
+				__func__, 
+				NVME_GET(cmd->fid ,SET_FEATURES_CDW10_SAVE), 
+				NVME_GET(cmd->fid ,FEATURES_CDW10_FID));
+
+	switch (NVME_GET(cmd->fid, FEATURES_CDW10_FID)) {
+#elif
 	switch (cmd->fid) {
+#endif //FDP_SIMULATOR
 	case NVME_FEAT_ARBITRATION:
 	case NVME_FEAT_POWER_MGMT:
 	case NVME_FEAT_LBA_RANGE:
@@ -527,6 +569,15 @@ static void __nvmev_admin_get_features(int eid)
 	case NVME_FEAT_HOST_ID:
 	case NVME_FEAT_RESV_MASK:
 	case NVME_FEAT_RESV_PERSIST:
+#ifdef FDP_SIMULATOR
+		break;
+	case NVME_FEAT_FDP:
+
+		result0 = nvmev_vdev->eg[0].fdp_enable;
+		NVMEV_INFO("%s: fdp_enable: %d\n", 
+				__func__, nvmev_vdev->eg[0].fdp_enable);
+
+#endif //FDP_SIMULATOR
 	default:
 		break;
 	}
@@ -552,6 +603,8 @@ static void __nvmev_proc_admin_req(int entry_id)
 
 	NVMEV_DEBUG("%s: %d 0x%x 0x%x\n", __func__, entry_id,
 			sqe->common.opcode, sqe->common.command_id);
+	NVMEV_INFO("%s: %d 0x%x 0x%x\n", __func__, entry_id,
+				sqe->common.opcode, sqe->common.command_id);
 
 	switch (sqe->common.opcode) {
 	case nvme_admin_delete_sq:
@@ -582,6 +635,10 @@ static void __nvmev_proc_admin_req(int entry_id)
 		break;
 	case nvme_admin_async_event:
 		__nvmev_admin_async_event(entry_id);
+		break;
+	case nvme_admin_ns_mgmt:
+		__make_cq_entry(entry_id, NVME_SC_INVALID_OPCODE);
+		NVMEV_INFO("NVMe Admin Namespace Management Command");
 		break;
 	case nvme_admin_activate_fw:
 	case nvme_admin_download_fw:

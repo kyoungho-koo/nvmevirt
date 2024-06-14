@@ -1,12 +1,12 @@
 # Select one of the targets to build
-CONFIG_NVMEVIRT_NVM := y
-#CONFIG_NVMEVIRT_SSD := y
+#CONFIG_NVMEVIRT_NVM := y
+CONFIG_NVMEVIRT_SSD := y
 #CONFIG_NVMEVIRT_ZNS := y
 #CONFIG_NVMEVIRT_KV := y
 
 obj-m   := nvmev.o
 nvmev-objs := main.o pci.o admin.o io.o dma.o
-ccflags-y += -Wno-unused-variable -Wno-unused-function
+ccflags-y += -Wno-unused-variable -Wno-unused-function -DFDP_SIMULATOR
 
 ccflags-$(CONFIG_NVMEVIRT_NVM) += -DBASE_SSD=INTEL_OPTANE
 nvmev-$(CONFIG_NVMEVIRT_NVM) += simple_ftl.o

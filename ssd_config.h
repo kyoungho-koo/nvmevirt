@@ -61,7 +61,9 @@ enum {
 #define LBA_SIZE (1 << LBA_BITS)
 
 #elif (BASE_SSD == SAMSUNG_970PRO)
+#define NR_ENDURANCEGROUPS 1
 #define NR_NAMESPACES 1
+
 
 #define NS_SSD_TYPE_0 SSD_TYPE_CONV
 #define NS_CAPACITY_0 (0)

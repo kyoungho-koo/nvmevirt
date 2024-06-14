@@ -372,6 +372,7 @@ static void conv_init_params(struct convparams *cpp)
 	cpp->pba_pcent = (int)((1 + cpp->op_area_pcent) * 100);
 }
 
+
 void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *mapped_addr,
 			 uint32_t cpu_nr_dispatcher)
 {
@@ -417,6 +418,7 @@ void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *
 
 	return;
 }
+
 
 void conv_remove_namespace(struct nvmev_ns *ns)
 {
@@ -1042,6 +1044,18 @@ static void conv_flush(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
 	return;
 }
 
+#ifdef FDP_SIMULATOR
+static void conv_io_mgmt_recv(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
+{
+	struct nvme_command *cmd = req->cmd;
+	struct conv_ftl *conv_ftls = (struct conv_ftl *)ns->ftls;
+
+	NVMEV_INFO("%s: IO Magement Rev: %s (0x%x)\n", __func__,
+			nvme_opcode_string(cmd->common.opcode), cmd->common.opcode);
+
+}
+#endif //FDP_SIMULATOR
+
 bool conv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
 {
 	struct nvme_command *cmd = req->cmd;
@@ -1060,6 +1074,12 @@ bool conv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req, struc
 	case nvme_cmd_flush:
 		conv_flush(ns, req, ret);
 		break;
+#ifdef FDP_SIMULATOR
+	// TODO: [KOO] IO Management Receive Command
+	case nvme_cmd_io_mgmt_recv:
+		conv_io_mgmt_recv(ns, req, ret);
+		break;
+#endif //FDP_SIMULATOR
 	default:
 		NVMEV_ERROR("%s: command not implemented: %s (0x%x)\n", __func__,
 				nvme_opcode_string(cmd->common.opcode), cmd->common.opcode);

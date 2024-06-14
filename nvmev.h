@@ -244,6 +244,10 @@ struct nvmev_dev {
 	unsigned int nr_ns;
 	unsigned int nr_sq;
 	unsigned int nr_cq;
+#ifdef FDP_SIMULATOR
+	struct nvmev_endg *eg;
+	unsigned int nr_eg;
+#endif //FDP_SIMULATOR
 
 	struct nvmev_admin_queue *admin_q;
 	struct nvmev_submission_queue *sqes[NR_MAX_IO_QUEUE + 1];
@@ -271,6 +275,15 @@ struct nvmev_result {
 	uint32_t status;
 	uint64_t nsecs_target;
 };
+
+#ifdef FDP_SIMULATOR
+struct nvmev_endg {
+	uint16_t id;
+	bool fdp_enable;
+	struct nvmev_ns *ns;
+	unsigned int nr_ns;
+};
+#endif //FDP_SIMULATOR
 
 struct nvmev_ns {
 	uint32_t id;

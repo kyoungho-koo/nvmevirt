@@ -514,6 +514,23 @@ static bool __load_configs(struct nvmev_config *config)
 	return true;
 }
 
+#ifdef FDP_SIMULATOR
+static void NVMEV_ENDURANCEGROUP_INIT(struct nvmev_dev *nvmev_vdev)
+{
+	const int nr_eg = NR_ENDURANCEGROUPS;
+	int i;
+	unsigned long long size;
+	struct nvmev_endg *eg = kmalloc(sizeof(struct nvmev_endg) * nr_eg, GFP_KERNEL);
+
+	eg->id = 0;
+	eg->fdp_enable = 0;
+
+	nvmev_vdev->eg = eg;
+	nvmev_vdev->nr_eg = nr_eg;
+}
+
+#endif //FDP_SIMULATOR
+
 static void NVMEV_NAMESPACE_INIT(struct nvmev_dev *nvmev_vdev)
 {
 	unsigned long long remaining_capacity = nvmev_vdev->config.storage_size;
@@ -550,6 +567,10 @@ static void NVMEV_NAMESPACE_INIT(struct nvmev_dev *nvmev_vdev)
 	nvmev_vdev->ns = ns;
 	nvmev_vdev->nr_ns = nr_ns;
 	nvmev_vdev->mdts = MDTS;
+#ifdef FDP_SIMULATOR
+	nvmev_vdev->eg[0].ns = ns;
+	nvmev_vdev->eg[0].nr_ns = nr_ns;
+#endif //FDP_SIMULATOR
 }
 
 static void NVMEV_NAMESPACE_FINAL(struct nvmev_dev *nvmev_vdev)
@@ -615,6 +636,10 @@ static int NVMeV_init(void)
 	}
 
 	NVMEV_STORAGE_INIT(nvmev_vdev);
+
+#ifdef FDP_SIMULATOR
+	NVMEV_ENDURANCEGROUP_INIT(nvmev_vdev);
+#endif //FDP_SIMULATOR
 
 	NVMEV_NAMESPACE_INIT(nvmev_vdev);
 

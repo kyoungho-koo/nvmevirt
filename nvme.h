@@ -316,6 +316,7 @@ struct nvme_reservation_status {
 	op(nvme_cmd_resv_register, 0x0d)	\
 	op(nvme_cmd_resv_report, 0x0e)		\
 	op(nvme_cmd_resv_acquire, 0x11)		\
+	op(nvme_cmd_io_mgmt_recv, 0x12)		\
 	op(nvme_cmd_resv_release, 0x15)		\
 	op(nvme_cmd_zone_mgmt_send, 0x79)	\
 	op(nvme_cmd_zone_mgmt_recv, 0x7a)	\
@@ -480,6 +481,45 @@ enum nvme_admin_opcode {
 	nvme_admin_vendor_start = 0xC0,
 };
 
+#ifdef FDP_SIMULATOR
+
+enum nvme_cmd_dword_fields {
+    NVME_GET_FEATURES_CDW10_SEL_SHIFT           = 8,
+    NVME_GET_FEATURES_CDW10_SEL_MASK            = 0x7,
+    NVME_SET_FEATURES_CDW10_SAVE_SHIFT          = 31,
+    NVME_SET_FEATURES_CDW10_SAVE_MASK           = 0x1,
+    NVME_FEATURES_CDW10_FID_SHIFT               = 0,
+    NVME_FEATURES_CDW14_UUID_SHIFT              = 0,
+    NVME_FEATURES_CDW10_FID_MASK                = 0xff,
+    NVME_FEATURES_CDW14_UUID_MASK               = 0x7f,
+};
+
+
+/**
+ * NVME_GET() - extract field from complex value
+ * @value: The original value of a complex field
+ * @name: The name of the sub-field within an nvme value
+ *
+ * By convention, this library defines _SHIFT and _MASK such that mask can be
+ * applied after the shift to isolate a specific set of bits that decode to a
+ * sub-field.
+ *
+ * Returns: The 'name' field from 'value'
+ */
+#define NVME_GET(value, name) \
+    (((value) >> NVME_##name##_SHIFT) & NVME_##name##_MASK)                                                                                                                                                                                                                                                                   
+
+/**
+ * NVME_SET() - set field into complex value
+ * @value: The value to be set in its completed position
+ * @name: The name of the sub-field within an nvme value
+ *
+ * Returns: The 'name' field from 'value'
+ */
+#define NVME_SET(value, name) \
+	(((__u32)(value) & NVME_##name##_MASK) << NVME_##name##_SHIFT)
+#endif //FDP_SIMULATOR
+
 enum {
 	NVME_QUEUE_PHYS_CONTIG = (1 << 0),
 	NVME_CQ_IRQ_ENABLED = (1 << 1),
@@ -499,6 +539,9 @@ enum {
 	NVME_FEAT_WRITE_ATOMIC = 0x0a,
 	NVME_FEAT_ASYNC_EVENT = 0x0b,
 	NVME_FEAT_AUTO_PST = 0x0c,
+#ifdef FDP_SIMULATOR
+	NVME_FEAT_FDP = 0x1d,
+#endif //FDP_SIMULATOR
 	NVME_FEAT_SW_PROGRESS = 0x80,
 	NVME_FEAT_HOST_ID = 0x81,
 	NVME_FEAT_RESV_MASK = 0x82,
