@@ -344,6 +344,15 @@ static const char *const __nvme_opcode_strings[] = {
 #define nvme_opcode_string(opcode) \
 	(__nvme_opcode_strings[opcode] ? __nvme_opcode_strings[opcode] : "unknown")
 
+#ifdef FDP_SIMULATOR
+enum nvme_constants {
+	NVME_NSID_ALL		= 0xffffffff,
+	NVME_NSID_NONE		= 0,
+	NVME_UUID_NONE		= 0,
+	NVME_CNTLID_NONE	= 0,
+};
+#endif //FDP_SIMULATOR
+
 struct nvme_common_command {
 	__u8 opcode;
 	__u8 flags;

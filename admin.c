@@ -252,8 +252,14 @@ static void __nvmev_admin_identify_namespace(int eid)
 	struct nvme_identify *cmd = &sq_entry(eid).identify;
 	size_t nsid = cmd->nsid - 1;
 
+#ifdef FDP_SIMULATOR
+	NVMEV_INFO("%s:  prp1 0x%p\n", 
+				__func__, cmd->prp1);
+#endif //FDP_SIMULATOR
+
 	ns = prp_address(cmd->prp1);
 	memset(ns, 0x0, PAGE_SIZE);
+
 
 	ns->lbaf[0].ms = 0;
 	ns->lbaf[0].ds = 9;
@@ -294,7 +300,25 @@ static void __nvmev_admin_identify_namespace(int eid)
 	ns->nlbaf = 6;
 	ns->dps = 0;
 
+#ifdef FDP_SIMULATOR
+	NVMEV_INFO("%s: nvmev_vdev 0x%p\n", 
+				__func__, nvmev_vdev);
+	NVMEV_INFO("%s: nsid %d nvmev_vdev->ns 0x%p\n", 
+				__func__, nsid, nvmev_vdev->ns);
+//	NVMEV_INFO("%s: nvmev_vdev->ns[%d].size %d\n", 
+//				__func__, nsid, nvmev_vdev->ns[nsid].size);
+//	NVMEV_INFO("%s: ns->lbaf[%d] \n", 
+//				__func__, ns->flbas);
+//	NVMEV_INFO("%s: ns->lbaf[%d].ds %d\n", 
+//				__func__, ns->flbas, ns->lbaf[ns->flbas].ds);
+	if (cmd->nsid != NVME_NSID_ALL) {
+		ns->nsze = (nvmev_vdev->ns[nsid].size >> ns->lbaf[ns->flbas].ds);
+	} else {
+		ns->nsze = 0;
+	}
+#elif
 	ns->nsze = (nvmev_vdev->ns[nsid].size >> ns->lbaf[ns->flbas].ds);
+#endif //FDP_SIMULATOR
 	ns->ncap = ns->nsze;
 	ns->nuse = ns->nsze;
 
@@ -425,6 +449,10 @@ static void __nvmev_admin_identify(int eid)
 {
 	struct nvmev_admin_queue *queue = nvmev_vdev->admin_q;
 	int cns = sq_entry(eid).identify.cns;
+#ifdef FDP_SIMULATOR
+	NVMEV_INFO("%s:  cns 0x%x\n", 
+				__func__, cns);
+#endif //FDP_SIMULATOR
 
 	switch (cns) {
 	case 0x00:
@@ -595,6 +623,22 @@ static void __nvmev_admin_async_event(int eid)
 	// __make_cq_entry(eid, NVME_SC_ASYNC_LIMIT);
 }
 
+#ifdef FDP_SIMULATOR
+static void __nvmev_admin_ns_mgmt(int eid)
+{
+	struct nvmev_admin_queue *queue = nvmev_vdev->admin_q;
+	struct nvme_ns_mgmt *cmd = &sq_entry(eid).ns_mgmt;
+
+	__le32 result0 = 0;
+	__le32 result1 = 0;
+
+	//NVMEV_INFO("%s: %d 0x%x 0x%x\n", __func__, eid,
+//				cmd->opcode, cmd->command_id);
+
+	__make_cq_entry_results(eid, NVME_SC_SUCCESS, result0, result1);
+}
+#endif //FDP_SIMULATOR
+
 
 static void __nvmev_proc_admin_req(int entry_id)
 {
@@ -603,8 +647,10 @@ static void __nvmev_proc_admin_req(int entry_id)
 
 	NVMEV_DEBUG("%s: %d 0x%x 0x%x\n", __func__, entry_id,
 			sqe->common.opcode, sqe->common.command_id);
+#ifdef FDP_SIMULATOR
 	NVMEV_INFO("%s: %d 0x%x 0x%x\n", __func__, entry_id,
 				sqe->common.opcode, sqe->common.command_id);
+#endif //FDP_SIMULATOR
 
 	switch (sqe->common.opcode) {
 	case nvme_admin_delete_sq:
@@ -636,10 +682,12 @@ static void __nvmev_proc_admin_req(int entry_id)
 	case nvme_admin_async_event:
 		__nvmev_admin_async_event(entry_id);
 		break;
+#ifdef FDP_SIMULATOR
 	case nvme_admin_ns_mgmt:
-		__make_cq_entry(entry_id, NVME_SC_INVALID_OPCODE);
 		NVMEV_INFO("NVMe Admin Namespace Management Command");
+		__nvmev_admin_ns_mgmt(entry_id);
 		break;
+#endif //FDP_SIMULATOR
 	case nvme_admin_activate_fw:
 	case nvme_admin_download_fw:
 	case nvme_admin_format_nvm:
