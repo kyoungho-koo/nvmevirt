@@ -491,6 +491,15 @@ enum nvme_admin_opcode {
 };
 
 #ifdef FDP_SIMULATOR
+/**
+ * enum nvme_ns_mgmt_sel - Namespace Management - Select
+ * @NVME_NS_MGMT_SEL_CREATE:	Namespace Create selection
+ * @NVME_NS_MGMT_SEL_DELETE:	Namespace Delete selection
+ */
+enum nvme_ns_mgmt_sel {
+	NVME_NS_MGMT_SEL_CREATE				= 0,
+	NVME_NS_MGMT_SEL_DELETE				= 1,
+};
 
 enum nvme_cmd_dword_fields {
     NVME_GET_FEATURES_CDW10_SEL_SHIFT           = 8,
@@ -501,6 +510,12 @@ enum nvme_cmd_dword_fields {
     NVME_FEATURES_CDW14_UUID_SHIFT              = 0,
     NVME_FEATURES_CDW10_FID_MASK                = 0xff,
     NVME_FEATURES_CDW14_UUID_MASK               = 0x7f,
+	NVME_NAMESPACE_ATTACH_CDW10_SEL_SHIFT		= 0,
+	NVME_NAMESPACE_ATTACH_CDW10_SEL_MASK		= 0xf,
+	NVME_NAMESPACE_MGMT_CDW10_SEL_SHIFT			= 0,
+	NVME_NAMESPACE_MGMT_CDW10_SEL_MASK			= 0xf,
+	NVME_NAMESPACE_MGMT_CDW11_CSI_SHIFT			= 24,
+	NVME_NAMESPACE_MGMT_CDW11_CSI_MASK			= 0xff,
 };
 
 
@@ -667,6 +682,110 @@ struct nvme_format_cmd {
 	__u32 rsvd11[5];
 };
 
+#ifdef FDP_SIMULATOR
+struct nvme_ns_mgmt {
+	__u8 opcode;
+	__u8 flags;
+	__u16 command_id;
+	__le32 nsid;
+	__le32 cdw2;
+	__le32 cdw3;
+	__le64 metadata;
+	__le64 addr;
+	__le32 metadata_len;
+	__le32 data_len;
+	__le32 cdw10;
+	__le32 cdw11;
+	__le32 cdw12;
+	__le32 cdw13;
+	__le32 cdw14;
+	__le32 cdw15;
+};
+/**
+ * struct nvme_ns_mgmt_host_sw_specified - Namespace management Host Software
+ * Specified Fields.
+ * @nsze:     Namespace Size indicates the total size of the namespace in
+ *        logical blocks. The number of logical blocks is based on the
+ *        formatted LBA size.
+ * @ncap:     Namespace Capacity indicates the maximum number of logical blocks
+ *        that may be allocated in the namespace at any point in time. The
+ *        number of logical blocks is based on the formatted LBA size.
+ * @rsvd16:   Reserved
+ * @flbas:    Formatted LBA Size, see &enum nvme_id_ns_flbas.
+ * @rsvd27:   Reserved
+ * @dps:      End-to-end Data Protection Type Settings, see
+ *        &enum nvme_id_ns_dps.
+ * @nmic:     Namespace Multi-path I/O and Namespace Sharing Capabilities, see
+ *        &enum nvme_id_ns_nmic.
+ * @rsvd31:   Reserved
+ * @anagrpid: ANA Group Identifier indicates the ANA Group Identifier of the
+ *        ANA group of which the namespace is a member.
+ * @rsvd96:   Reserved
+ * @nvmsetid: NVM Set Identifier indicates the NVM Set with which this
+ *        namespace is associated.
+ * @endgid:   Endurance Group Identifier indicates the Endurance Group with
+ *        which this namespace is associated.
+ * @rsvd104:  Reserved
+ * @lbstm:    Logical Block Storage Tag Mask Identifies the mask for the
+ *        Storage Tag field for the protection information
+ * @nphndls:  Number of Placement Handles specifies the number of Placement
+ *        Handles included in the Placement Handle List
+ * @rsvd394:  Reserved
+ * @rsvd499:  Reserved for I/O Command Sets that extend this specification.
+ * @zns:      rsvd499( Zoned Namespace Command Set specific field )
+ * @znsco:    Zoned Namespace Create Options
+ *        Bits 7-1: Reserved.
+ *        Bits 0: Allocate ZRWA Resources (AZR): If set to �~@~X1�~@~Y, then the
+ *        namespace is to be created with the number of ZRWA resource specified
+ *        in the RNUMZRWA field of this data structure. If cleared to �~@~X0�~@~Y, then
+ *        no ZRWA resources are allocated to the namespace to be created. If
+ *        the ZRWASUP bit is cleared to �~@~X0�~@~Y, then this field shall be ignored
+ *        by the controller.
+ * @rar:      Requested Active Resources specifies the number of active
+ *        resources to be allocated to the created namespace.
+ * @ror:      Requested Open Resources specifies the number of open resources
+ *        to be allocated to the created namespace.
+ * @rnumzrwa: Requested Number of ZRWA Resources specifies the number of ZRWA
+ *        resources to be allocated to the created namespace.
+ *        see &struct nvme_ns_mgmt_host_sw_specified_zns.
+ * @phndl:    Placement Handle Associated RUH : This field specifies the Reclaim
+ *        Unit Handle Identifier to be associated with the Placement Handle
+ *        value. If the Flexible Data Placement capability is not supported or
+ *        not enabled in specified Endurance Group, then the controller shall
+ *        ignore this field.
+ * @rsvd768:   Reserved
+ */
+struct nvme_ns_mgmt_host_sw_specified {
+	__le64		nsze;
+	__le64		ncap;
+	__u8		rsvd16[10];
+	__u8		flbas;
+	__u8		rsvd27[2];
+	__u8		dps;
+	__u8		nmic;
+	__u8		rsvd31[61];
+	__le32		anagrpid;
+	__u8		rsvd96[4];
+	__le16		nvmsetid;
+	__le16		endgid;
+	__u8		rsvd104[280];
+	__le64		lbstm;
+	__le16		nphndls;
+	__u8		rsvd394[105];
+	union {
+		__u8		rsvd499[13];
+		struct {
+			__u8	znsco;
+			__le32	rar;
+			__le32	ror;
+			__le32	rnumzrwa;
+		} __attribute__((packed)) zns;
+	};
+	__le16		phndl[128];
+	__u8		rsvd768[3328];
+};
+#endif //FDP_SIMULATOR
+
 struct nvme_command {
 	union {
 		struct nvme_common_command common;
@@ -679,6 +798,9 @@ struct nvme_command {
 		struct nvme_delete_queue delete_queue;
 		struct nvme_download_firmware dlfw;
 		struct nvme_format_cmd format;
+#ifdef FDP_SIMULATOR
+		struct nvme_ns_mgmt ns_mgmt;
+#endif //FDP_SIMULATOR
 		struct nvme_dsm_cmd dsm;
 		struct nvme_abort_cmd abort;
 	};

@@ -529,6 +529,13 @@ static void NVMEV_ENDURANCEGROUP_INIT(struct nvmev_dev *nvmev_vdev)
 	nvmev_vdev->nr_eg = nr_eg;
 }
 
+static void NVMEV_ENDURANCEGROUP_FINAL(struct nvmev_dev *nvmev_vdev)
+{
+	struct nvmev_endg *eg = nvmev_vdev->eg;
+	kfree (eg);
+	nvmev_vdev->eg = NULL;
+}
+
 #endif //FDP_SIMULATOR
 
 static void NVMEV_NAMESPACE_INIT(struct nvmev_dev *nvmev_vdev)
@@ -559,6 +566,9 @@ static void NVMEV_NAMESPACE_INIT(struct nvmev_dev *nvmev_vdev)
 		else
 			BUG_ON(1);
 
+#ifdef FDP_SIMULATOR
+		nvmev_vdev->eg[0].ns[i] = &ns[i];
+#endif //FDP_SIMULATOR
 		remaining_capacity -= size;
 		ns_addr += size;
 		NVMEV_INFO("ns %d/%d: size %lld MiB\n", i, nr_ns, BYTE_TO_MB(ns[i].size));
@@ -568,7 +578,8 @@ static void NVMEV_NAMESPACE_INIT(struct nvmev_dev *nvmev_vdev)
 	nvmev_vdev->nr_ns = nr_ns;
 	nvmev_vdev->mdts = MDTS;
 #ifdef FDP_SIMULATOR
-	nvmev_vdev->eg[0].ns = ns;
+	// For Dynamic Allocate Namespace
+	nvmev_vdev->free_mapped = ns_addr;
 	nvmev_vdev->eg[0].nr_ns = nr_ns;
 #endif //FDP_SIMULATOR
 }
@@ -683,6 +694,9 @@ static void NVMeV_exit(void)
 	NVMEV_IO_WORKER_FINAL(nvmev_vdev);
 
 	NVMEV_NAMESPACE_FINAL(nvmev_vdev);
+#ifdef FDP_SIMULATOR
+	NVMEV_ENDURANCEGROUP_FINAL(nvmev_vdev);
+#endif //FDP_SIMULATOR
 	NVMEV_STORAGE_FINAL(nvmev_vdev);
 
 	if (io_using_dma) {

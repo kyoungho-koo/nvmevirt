@@ -245,6 +245,8 @@ struct nvmev_dev {
 	unsigned int nr_sq;
 	unsigned int nr_cq;
 #ifdef FDP_SIMULATOR
+	void *free_mapped;
+
 	struct nvmev_endg *eg;
 	unsigned int nr_eg;
 #endif //FDP_SIMULATOR
@@ -280,7 +282,7 @@ struct nvmev_result {
 struct nvmev_endg {
 	uint16_t id;
 	bool fdp_enable;
-	struct nvmev_ns *ns;
+	struct nvmev_ns *ns[MAX_NAMESPACES];
 	unsigned int nr_ns;
 };
 #endif //FDP_SIMULATOR

@@ -311,7 +311,7 @@ static void __nvmev_admin_identify_namespace(int eid)
 //				__func__, ns->flbas);
 //	NVMEV_INFO("%s: ns->lbaf[%d].ds %d\n", 
 //				__func__, ns->flbas, ns->lbaf[ns->flbas].ds);
-	if (cmd->nsid != NVME_NSID_ALL) {
+	if (cmd->nsid != NVME_NSID_ALL && nvmev_vdev->ns != NULL) {
 		ns->nsze = (nvmev_vdev->ns[nsid].size >> ns->lbaf[ns->flbas].ds);
 	} else {
 		ns->nsze = 0;
@@ -358,7 +358,13 @@ static void __nvmev_admin_identify_namespace_desc(int eid)
 	ns_desc->nidt = NVME_NIDT_CSI;
 	ns_desc->nidl = 1;
 
+#ifdef FDP_SIMULATOR
+	if (nvmev_vdev->ns != NULL) {
+		ns_desc->nid[0] = nvmev_vdev->ns[nsid].csi; // Zoned Name Space Command Set
+	}
+#elif
 	ns_desc->nid[0] = nvmev_vdev->ns[nsid].csi; // Zoned Name Space Command Set
+#endif //FDP_SIMULATOR
 
 	__make_cq_entry(eid, NVME_SC_SUCCESS);
 }
@@ -624,6 +630,101 @@ static void __nvmev_admin_async_event(int eid)
 }
 
 #ifdef FDP_SIMULATOR
+static void __nvmev_admin_ns_create(int eid)
+{
+	struct nvmev_admin_queue *queue = nvmev_vdev->admin_q;
+	struct nvme_ns_mgmt *cmd = &sq_entry(eid).ns_mgmt;
+	struct nvme_ns_mgmt_host_sw_specified *data 
+		= prp_address(cmd->addr);
+	// ADD new Namespace in Endurance Group
+	int nsid = nvmev_vdev->eg[0].nr_ns;
+	int endgid = data->endgid;
+	struct nvmev_ns *ns = kmalloc(sizeof(struct nvmev_ns) , GFP_KERNEL);
+	void *ns_addr = nvmev_vdev->free_mapped;
+	const unsigned int disp_no = nvmev_vdev->config.cpu_nr_dispatcher;
+	unsigned long long size;
+
+	NVMEV_INFO("%s nvme_ns_mgmt_host_sw_specified \n", __func__);
+	NVMEV_INFO("%s\n" 
+				"\tdata->nsze %lld\n"
+				"\tdata->ncap %lld\n"
+				"\tdata->flbas %d\n"
+				"\tdata->nmic %d\n"
+				"\tdata->anagrpid %d\n"
+				"\tdata->nvmsetid %d\n"
+				"\tdata->endgid %d\n"
+				"\tdata->lbstm %lld\n"
+				"\tdata->nphndls %d\n",
+				__func__, 
+				data->nsze,
+				data->ncap,
+				data->flbas,
+				data->nmic,
+				data->anagrpid,
+				data->nvmsetid,
+				data->endgid,
+				data->lbstm,
+				data->nphndls);
+
+	NVMEV_INFO("storage size: %lld "
+			"storage_mapped 0x%p " 
+			"free_mapped 0x%p "
+			"nsid %d \n", 
+			nvmev_vdev->config.storage_size,
+			nvmev_vdev->storage_mapped,
+			nvmev_vdev->free_mapped,
+			nsid);
+
+	size = nvmev_vdev->config.storage_size; 
+	conv_init_namespace(ns, nsid, size, ns_addr, disp_no);
+	nvmev_vdev->free_mapped += size;
+
+
+	nvmev_vdev->eg[endgid].ns[nsid] = ns;
+	nvmev_vdev->eg[endgid].nr_ns++;
+
+}
+
+static void __nvmev_admin_ns_delete(int eid)
+{
+	struct nvmev_admin_queue *queue = nvmev_vdev->admin_q;
+	struct nvme_ns_mgmt *cmd = &sq_entry(eid).ns_mgmt;
+
+	struct nvmev_ns *nsp = nvmev_vdev->ns;
+
+	struct nvme_ns_mgmt_host_sw_specified *data 
+		= prp_address(cmd->addr);
+
+	int endgid = data->endgid;
+	int nsid = cmd->nsid -1;
+
+	NVMEV_INFO("[%s] <NVME_NS_MGMT_SEL_DELETE> nsid %d\n", 
+			__func__, nsid);
+	/*
+	if (nvmev_vdev->virt_bus != NULL) {
+		pci_stop_root_bus(nvmev_vdev->virt_bus);
+		pci_remove_root_bus(nvmev_vdev->virt_bus);
+	}
+	*/
+
+	NVMEV_INFO("[%s] <NVME_NS_MGMT_SEL_DELETE> nsid %d free_mapped : 0x%p\n", 
+			__func__, nsid, nvmev_vdev->free_mapped);
+
+	conv_remove_namespace(&nsp[nsid]);
+	nvmev_vdev->free_mapped -= nsp[nsid].size;
+
+	NVMEV_INFO("[%s] <NVME_NS_MGMT_SEL_DELETE> namespace addr: 0x%p free_mapped: 0x%p\n", 
+			__func__, (void *)&nsp[nsid], nvmev_vdev->free_mapped);
+
+	kfree(nsp);
+
+	nvmev_vdev->eg[endgid].nr_ns--;
+	NVMEV_INFO("[%s] <NVME_NS_MGMT_SEL_DELETE> nr_ns %d \n", 
+			__func__, nvmev_vdev->eg[endgid].nr_ns);
+	nvmev_vdev->eg[endgid].ns[nsid] = NULL;
+	nvmev_vdev->ns = NULL;
+}
+
 static void __nvmev_admin_ns_mgmt(int eid)
 {
 	struct nvmev_admin_queue *queue = nvmev_vdev->admin_q;
@@ -632,10 +733,42 @@ static void __nvmev_admin_ns_mgmt(int eid)
 	__le32 result0 = 0;
 	__le32 result1 = 0;
 
-	//NVMEV_INFO("%s: %d 0x%x 0x%x\n", __func__, eid,
-//				cmd->opcode, cmd->command_id);
+	NVMEV_INFO("%s: %d 0x%x 0x%x\n", __func__, eid,
+				cmd->opcode, cmd->command_id);
+
+	int sel = NVME_GET(cmd->cdw10, NAMESPACE_MGMT_CDW10_SEL);
+	
+	switch (sel) {
+	case NVME_NS_MGMT_SEL_CREATE:
+		__nvmev_admin_ns_create(eid);
+		break;
+	case NVME_NS_MGMT_SEL_DELETE:
+		__nvmev_admin_ns_delete(eid);
+		break;
+	default:
+		break;
+	}
 
 	__make_cq_entry_results(eid, NVME_SC_SUCCESS, result0, result1);
+}
+
+static void __nvmev_admin_ns_attach(int eid)
+{
+	struct nvmev_admin_queue *queue = nvmev_vdev->admin_q;
+	struct nvme_ns_mgmt *cmd = &sq_entry(eid).ns_mgmt;
+
+
+	__le32 result0 = 0;
+	__le32 result1 = 0;
+
+	NVMEV_INFO("%s: %d 0x%x 0x%x\n", __func__, eid,
+				cmd->opcode, cmd->command_id);
+
+
+	int sel = NVME_GET(cmd->cdw10, NAMESPACE_ATTACH_CDW10_SEL);
+
+	__make_cq_entry_results(eid, NVME_SC_SUCCESS, result0, result1);
+
 }
 #endif //FDP_SIMULATOR
 
@@ -684,8 +817,11 @@ static void __nvmev_proc_admin_req(int entry_id)
 		break;
 #ifdef FDP_SIMULATOR
 	case nvme_admin_ns_mgmt:
-		NVMEV_INFO("NVMe Admin Namespace Management Command");
 		__nvmev_admin_ns_mgmt(entry_id);
+		break;
+	case nvme_admin_ns_attach:
+		NVMEV_INFO("NVMe Namespace Attach Command");
+		__nvmev_admin_ns_attach(entry_id);
 		break;
 #endif //FDP_SIMULATOR
 	case nvme_admin_activate_fw:
