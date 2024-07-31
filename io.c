@@ -95,6 +95,11 @@ static unsigned int __do_perform_io(int sqid, int sq_entry)
 		    cmd->opcode == nvme_cmd_zone_append) {
 			memcpy(nvmev_vdev->ns[nsid].mapped + offset, vaddr + mem_offs, io_size);
 		} else if (cmd->opcode == nvme_cmd_read) {
+#ifdef FDP_SIMULATOR
+			//NVMEV_INFO("[FDP_SIMULATOR] %s() vaddr: 0x%p mem_offs: %p nvmev_vdev->ns[nsid: %d].mapped 0x%p offset: %d io_size: %d\n",
+			//		__func__, vaddr, mem_offs, nsid, nvmev_vdev->ns[nsid].mapped, offset, io_size);
+
+#endif //FDP_SIMULATOR
 			memcpy(vaddr + mem_offs, nvmev_vdev->ns[nsid].mapped + offset, io_size);
 		}
 
@@ -410,7 +415,13 @@ static size_t __nvmev_proc_io(int sqid, int sq_entry, size_t *io_size)
 #else
 	uint32_t nsid = cmd->common.nsid - 1;
 #endif
+
 	struct nvmev_ns *ns = &nvmev_vdev->ns[nsid];
+#ifdef FDP_SIMULATOR
+	NVMEV_ASSERT(ns != NULL);
+	//NVMEV_INFO("%s nsid %d ns 0x%p \n", __func__, nsid, ns);
+#endif //FDP_SIMULATOR
+
 
 	struct nvmev_request req = {
 		.cmd = cmd,

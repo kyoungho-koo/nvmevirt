@@ -6,6 +6,9 @@
 #include "nvmev.h"
 #include "conv_ftl.h"
 
+#define prp_address_offset(prp, offset) \
+	(page_address(pfn_to_page(prp >> PAGE_SHIFT) + offset) + (prp & ~PAGE_MASK))
+#define prp_address(prp) prp_address_offset(prp, 0)
 static inline bool last_pg_in_wordline(struct conv_ftl *conv_ftl, struct ppa *ppa)
 {
 	struct ssdparams *spp = &conv_ftl->ssd->sp;
@@ -106,6 +109,52 @@ static inline void check_and_refill_write_credit(struct conv_ftl *conv_ftl)
 	}
 }
 
+#ifdef FDP_SIMULATOR
+static void init_fdp_lines(struct fdp_ftl *fdp_ftl)
+{
+	struct ssdparams *spp = &fdp_ftl->ssd->sp;
+	struct line_mgmt *lm = &fdp_ftl->lm;
+	struct line *line;
+	int i;
+
+	lm->tt_lines = spp->blks_per_pl;
+	NVMEV_ASSERT(lm->tt_lines == spp->tt_lines);
+	lm->lines = vmalloc(sizeof(struct line) * lm->tt_lines);
+
+	INIT_LIST_HEAD(&lm->free_line_list);
+	INIT_LIST_HEAD(&lm->full_line_list);
+
+	lm->victim_line_pq = pqueue_init(spp->tt_lines, victim_line_cmp_pri, victim_line_get_pri,
+					 victim_line_set_pri, victim_line_get_pos,
+					 victim_line_set_pos);
+
+	lm->free_line_cnt = 0;
+	for (i = 0; i < lm->tt_lines; i++) {
+		lm->lines[i] = (struct line){
+			.id = i,
+			.ipc = 0,
+			.vpc = 0,
+			.pos = 0,
+			.entry = LIST_HEAD_INIT(lm->lines[i].entry),
+		};
+
+		/* initialize all the lines as free lines */
+		list_add_tail(&lm->lines[i].entry, &lm->free_line_list);
+		lm->free_line_cnt++;
+	}
+
+	NVMEV_ASSERT(lm->free_line_cnt == lm->tt_lines);
+	lm->victim_line_cnt = 0;
+	lm->full_line_cnt = 0;
+}
+
+static void remove_fdp_lines(struct fdp_ftl *fdp_ftl)
+{
+	pqueue_free(fdp_ftl->lm.victim_line_pq);
+	vfree(fdp_ftl->lm.lines);
+}
+
+#endif //FDP_SIMULATOR
 static void init_lines(struct conv_ftl *conv_ftl)
 {
 	struct ssdparams *spp = &conv_ftl->ssd->sp;
@@ -149,6 +198,16 @@ static void remove_lines(struct conv_ftl *conv_ftl)
 	pqueue_free(conv_ftl->lm.victim_line_pq);
 	vfree(conv_ftl->lm.lines);
 }
+#ifdef FDP_SIMULATOR
+static void init_fdp_write_flow_control(struct fdp_ftl *fdp_ftl)
+{
+	struct write_flow_control *wfc = &(fdp_ftl->wfc);
+	struct ssdparams *spp = &fdp_ftl->ssd->sp;
+
+	wfc->write_credits = spp->pgs_per_line;
+	wfc->credits_to_refill = spp->pgs_per_line;
+}
+#endif //FDP_SIMULATOR
 
 static void init_write_flow_control(struct conv_ftl *conv_ftl)
 {
@@ -176,7 +235,7 @@ static struct line *get_next_free_line(struct conv_ftl *conv_ftl)
 
 	list_del_init(&curline->entry);
 	lm->free_line_cnt--;
-	NVMEV_DEBUG("%s: free_line_cnt %d\n", __func__, lm->free_line_cnt);
+	//NVMEV_INFO("%s: free_line_cnt %d\n", __func__, lm->free_line_cnt);
 	return curline;
 }
 
@@ -211,6 +270,55 @@ static void prepare_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type)
 	};
 }
 
+#ifdef FDP_SIMULATOR
+static struct line *get_fdp_next_free_line(struct fdp_ftl *fdp_ftl)
+{
+	struct line_mgmt *lm = &fdp_ftl->lm;
+	struct line *curline = list_first_entry_or_null(&lm->free_line_list, struct line, entry);
+
+	if (!curline) {
+		NVMEV_ERROR("[FDP_SIMULATOR] No free line left in VIRT !!!!\n");
+		return NULL;
+	}
+
+	list_del_init(&curline->entry);
+	lm->free_line_cnt--;
+	NVMEV_DEBUG("%s: [FDP_SIMULATOR] free_line_cnt %d\n", __func__, lm->free_line_cnt);
+	return curline;
+}
+
+static struct write_pointer *__get_fdp_wp(struct fdp_ftl *ftl, uint32_t io_type)
+{
+	if (io_type == USER_IO) {
+		return &ftl->wp;
+	} else if (io_type == GC_IO) {
+		return &ftl->gc_wp;
+	}
+
+	NVMEV_ASSERT(0);
+	return NULL;
+}
+
+static void prepare_fdp_write_pointer(struct fdp_ftl *fdp_ftl, uint32_t io_type)
+{
+	struct write_pointer *wp = __get_fdp_wp(fdp_ftl, io_type);
+	struct line *curline = get_fdp_next_free_line(fdp_ftl);
+
+	NVMEV_ASSERT(wp);
+	NVMEV_ASSERT(curline);
+
+	/* wp->curline is always our next-to-write super-block */
+	*wp = (struct write_pointer){
+		.curline = curline,
+		.ch = 0,
+		.lun = 0,
+		.pg = 0,
+		.blk = curline->id,
+		.pl = 0,
+	};
+}
+#endif //FDP_SIMULATOR
+
 static void advance_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type)
 {
 	struct ssdparams *spp = &conv_ftl->ssd->sp;
@@ -222,27 +330,35 @@ static void advance_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type)
 
 	check_addr(wpp->pg, spp->pgs_per_blk);
 	wpp->pg++;
-	if ((wpp->pg % spp->pgs_per_oneshotpg) != 0)
+	if ((wpp->pg % spp->pgs_per_oneshotpg) != 0) {
+		//NVMEV_INFO("[NoFreeLine] %s() goto out 1\n", __func__);
 		goto out;
+	}
 
 	wpp->pg -= spp->pgs_per_oneshotpg;
 	check_addr(wpp->ch, spp->nchs);
 	wpp->ch++;
-	if (wpp->ch != spp->nchs)
+	if (wpp->ch != spp->nchs) {
+		//NVMEV_INFO("[NoFreeLine] %s() goto out 2\n", __func__);
 		goto out;
+	}
 
 	wpp->ch = 0;
 	check_addr(wpp->lun, spp->luns_per_ch);
 	wpp->lun++;
 	/* in this case, we should go to next lun */
-	if (wpp->lun != spp->luns_per_ch)
+	if (wpp->lun != spp->luns_per_ch) {
+		//NVMEV_INFO("[NoFreeLine] %s() goto out 3\n", __func__);
 		goto out;
+	}
 
 	wpp->lun = 0;
 	/* go to next wordline in the block */
 	wpp->pg += spp->pgs_per_oneshotpg;
-	if (wpp->pg != spp->pgs_per_blk)
+	if (wpp->pg != spp->pgs_per_blk) {
+		//NVMEV_INFO("[NoFreeLine] %s() goto out 4\n", __func__);
 		goto out;
+	}
 
 	wpp->pg = 0;
 	/* move current line to {victim,full} line list */
@@ -252,17 +368,25 @@ static void advance_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type)
 		list_add_tail(&wpp->curline->entry, &lm->full_line_list);
 		lm->full_line_cnt++;
 		NVMEV_DEBUG_VERBOSE("wpp: move line to full_line_list\n");
+		//NVMEV_INFO("[NoFreeLine] %s() full_line_cnt++ %d\n", __func__, lm->full_line_cnt);
 	} else {
-		NVMEV_DEBUG_VERBOSE("wpp: line is moved to victim list\n");
 		NVMEV_ASSERT(wpp->curline->vpc >= 0 && wpp->curline->vpc < spp->pgs_per_line);
 		/* there must be some invalid pages in this line */
 		NVMEV_ASSERT(wpp->curline->ipc > 0);
 		pqueue_insert(lm->victim_line_pq, wpp->curline);
 		lm->victim_line_cnt++;
+		//NVMEV_INFO("[NoFreeLine] %s() victim_line_cnt++ %d\n", __func__,lm->victim_line_cnt);
 	}
 	/* current line is used up, pick another empty line */
 	check_addr(wpp->blk, spp->blks_per_pl);
 	wpp->curline = get_next_free_line(conv_ftl);
+#ifdef BUG_FIX
+	if(wpp->curline == NULL)  {
+		NVMEV_INFO("wpp: There is no free line left in VIRT\n");
+		return;
+	}
+#endif //BUG_FIX
+
 	NVMEV_DEBUG_VERBOSE("wpp: got new clean line %d\n", wpp->curline->id);
 
 	wpp->blk = wpp->curline->id;
@@ -328,6 +452,67 @@ static void remove_rmap(struct conv_ftl *conv_ftl)
 	vfree(conv_ftl->rmap);
 }
 
+#ifdef FDP_SIMULATOR
+static void init_fdp_maptbl(struct fdp_ftl *fdp_ftl)
+{
+	int i;
+	struct ssdparams *spp = &fdp_ftl->ssd->sp;
+
+	fdp_ftl->maptbl = vmalloc(sizeof(struct ppa) * spp->tt_pgs);
+	for (i = 0; i < spp->tt_pgs; i++) {
+		fdp_ftl->maptbl[i].ppa = UNMAPPED_PPA;
+	}
+}
+static void remove_fdp_maptbl(struct fdp_ftl *fdp_ftl)
+{
+	vfree(fdp_ftl->maptbl);
+}
+
+static void init_fdp_rmap(struct fdp_ftl *fdp_ftl)
+{
+	int i;
+	struct ssdparams *spp = &fdp_ftl->ssd->sp;
+
+	fdp_ftl->rmap = vmalloc(sizeof(uint64_t) * spp->tt_pgs);
+	for (i = 0; i < spp->tt_pgs; i++) {
+		fdp_ftl->rmap[i] = INVALID_LPN;
+	}
+}
+
+static void remove_fdp_rmap(struct fdp_ftl *fdp_ftl)
+{
+	vfree(fdp_ftl->rmap);
+}
+
+static void fdp_init_ftl(struct fdp_ftl *fdp_ftl, struct convparams *cpp, struct ssd *ssd)
+{
+	/*copy convparams*/
+	fdp_ftl->cp = *cpp;
+
+	fdp_ftl->ssd = ssd;
+
+	/* initialize maptbl */
+	init_fdp_maptbl(fdp_ftl); // mapping table
+
+	/* initialize rmap */
+	init_fdp_rmap(fdp_ftl); // reverse mapping table (?)
+
+	/* initialize all the lines */
+	init_fdp_lines(fdp_ftl);
+
+	/* initialize write pointer, this is how we allocate new pages for writes */
+	prepare_fdp_write_pointer(fdp_ftl, USER_IO);
+	prepare_fdp_write_pointer(fdp_ftl, GC_IO);
+
+	init_fdp_write_flow_control(fdp_ftl);
+
+	NVMEV_INFO("Init FTL instance with %d channels (%ld pages)\n", fdp_ftl->ssd->sp.nchs,
+		   fdp_ftl->ssd->sp.tt_pgs);
+
+	return;
+}
+
+#endif
 static void conv_init_ftl(struct conv_ftl *conv_ftl, struct convparams *cpp, struct ssd *ssd)
 {
 	/*copy convparams*/
@@ -372,6 +557,55 @@ static void conv_init_params(struct convparams *cpp)
 	cpp->pba_pcent = (int)((1 + cpp->op_area_pcent) * 100);
 }
 
+
+#ifdef FDP_SIMULATOR
+
+void fdp_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *mapped_addr,
+			 uint32_t cpu_nr_dispatcher, uint32_t nphndls)
+{
+	struct ssdparams spp;
+	struct convparams cpp;
+	struct fdp_ftl *fdp_ftls;
+	struct ssd *ssd;
+	uint32_t i;
+	const uint32_t nr_parts = nphndls;
+
+	ssd_init_params(&spp, size, nr_parts);
+	conv_init_params(&cpp);
+
+	fdp_ftls = kmalloc(sizeof(struct fdp_ftl) * nr_parts, GFP_KERNEL);
+
+	for (i = 0; i < nr_parts; i++) {
+		ssd = kmalloc(sizeof(struct ssd), GFP_KERNEL);
+		ssd_init(ssd, &spp, cpu_nr_dispatcher);
+		fdp_init_ftl(&fdp_ftls[i], &cpp, ssd);
+	}
+
+	/* PCIe, Write buffer are shared by all instances*/
+	for (i = 1; i < nr_parts; i++) {
+		kfree(fdp_ftls[i].ssd->pcie->perf_model);
+		kfree(fdp_ftls[i].ssd->pcie);
+		kfree(fdp_ftls[i].ssd->write_buffer);
+
+		fdp_ftls[i].ssd->pcie = fdp_ftls[0].ssd->pcie;
+		fdp_ftls[i].ssd->write_buffer = fdp_ftls[0].ssd->write_buffer;
+	}
+
+	ns->id = id;
+	ns->csi = NVME_CSI_NVM;
+	ns->nr_parts = nr_parts;
+	ns->ftls = (void *)fdp_ftls;
+	ns->size = (uint64_t)((size * 100) / cpp.pba_pcent);
+	ns->mapped = mapped_addr;
+	/*register io command handler*/
+	ns->proc_io_cmd = conv_proc_nvme_io_cmd;
+
+	NVMEV_INFO("FTL physical space: %lld, logical space: %lld (physical/logical * 100 = %d)\n",
+		   size, ns->size, cpp.pba_pcent);
+
+	return;
+}
+#endif //FDP_SIMULATOR
 
 void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *mapped_addr,
 			 uint32_t cpu_nr_dispatcher)
@@ -510,6 +744,7 @@ static void mark_page_invalid(struct conv_ftl *conv_ftl, struct ppa *ppa)
 	/* update corresponding line status */
 	line = get_line(conv_ftl, ppa);
 	NVMEV_ASSERT(line->ipc >= 0 && line->ipc < spp->pgs_per_line);
+	//NVMEV_INFO("[NoFreeLine] %s() line->vpc %d spp->pgs_per_line %d\n", __func__,line->vpc, spp->pgs_per_line);
 	if (line->vpc == spp->pgs_per_line) {
 		NVMEV_ASSERT(line->ipc == 0);
 		was_full_line = true;
@@ -528,8 +763,11 @@ static void mark_page_invalid(struct conv_ftl *conv_ftl, struct ppa *ppa)
 		/* move line: "full" -> "victim" */
 		list_del_init(&line->entry);
 		lm->full_line_cnt--;
+		//NVMEV_INFO("[NoFreeLine] %s() full_line_cnt-- %d\n", __func__,lm->full_line_cnt);
 		pqueue_insert(lm->victim_line_pq, line);
 		lm->victim_line_cnt++;
+		//NVMEV_INFO("[NoFreeLine] %s() victim_line_cnt++ %d\n", __func__,lm->victim_line_cnt);
+		//NVMEV_INFO("[NoFreeLine] %s() full_line -> victim_line\n", __func__);
 	}
 }
 
@@ -651,16 +889,19 @@ static struct line *select_victim_line(struct conv_ftl *conv_ftl, bool force)
 
 	victim_line = pqueue_peek(lm->victim_line_pq);
 	if (!victim_line) {
+		//NVMEV_INFO("[NoFreeLine] %s() victim_line_pq is NULL \n", __func__);
 		return NULL;
 	}
 
 	if (!force && (victim_line->vpc > (spp->pgs_per_line / 8))) {
+		//NVMEV_INFO("[NoFreeLine] %s() vpc > pgs_per_line \n", __func__);
 		return NULL;
 	}
 
 	pqueue_pop(lm->victim_line_pq);
 	victim_line->pos = 0;
 	lm->victim_line_cnt--;
+	//NVMEV_INFO("[NoFreeLine] %s() victim_line_cnt-- %d\n", __func__,lm->victim_line_cnt);
 
 	/* victim_line is a danggling node now */
 	return victim_line;
@@ -749,6 +990,7 @@ static void mark_line_free(struct conv_ftl *conv_ftl, struct ppa *ppa)
 	/* move this line to free line list */
 	list_add_tail(&line->entry, &lm->free_line_list);
 	lm->free_line_cnt++;
+	//NVMEV_INFO("[NoFreeLine] %s free_line_cnt++ %d \n", __func__, lm->free_line_cnt);
 }
 
 static int do_gc(struct conv_ftl *conv_ftl, bool force)
@@ -760,6 +1002,7 @@ static int do_gc(struct conv_ftl *conv_ftl, bool force)
 
 	victim_line = select_victim_line(conv_ftl, force);
 	if (!victim_line) {
+		//NVMEV_INFO("[NoFreeLine] %s victiom_line is NULL \n", __func__);
 		return -1;
 	}
 
@@ -819,6 +1062,7 @@ static void foreground_gc(struct conv_ftl *conv_ftl)
 		NVMEV_DEBUG_VERBOSE("should_gc_high passed");
 		/* perform GC here until !should_gc(conv_ftl) */
 		do_gc(conv_ftl, true);
+		//NVMEV_INFO("[NoFreeLine] %s <- do_gc() : %d\n", __func__, ret);
 	}
 }
 
@@ -933,6 +1177,7 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
 	struct buffer *wbuf = conv_ftl->ssd->write_buffer;
 
 	struct nvme_command *cmd = req->cmd;
+
 	uint64_t lba = cmd->rw.slba;
 	uint64_t nr_lba = (cmd->rw.length + 1);
 	uint64_t start_lpn = lba / spp->secs_per_pg;
@@ -951,6 +1196,19 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
 		.interleave_pci_dma = false,
 		.xfer_size = spp->pgsz * spp->pgs_per_oneshotpg,
 	};
+
+#ifdef FDP_SIMULATOR
+	uint32_t dspec = NVME_GET(cmd->rw.dsmgmt, READ_WRITE_CDW13_DSPEC);
+	/*
+	if (dspec != 0) {
+		NVMEV_INFO("[DSPEC] %s() dspec: %d\n", __func__,dspec,);
+	}
+	NVMEV_ASSERT(ns->eg != NULL);
+	struct nvmev_placement_handle_list *phndls = ns->eg->phndls;
+	NVMEV_ASSERT(phndls != NULL);
+	*/
+
+#endif //FDP_SIMULATOR
 
 	NVMEV_DEBUG_VERBOSE("%s: start_lpn=%lld, len=%lld, end_lpn=%lld", __func__, start_lpn, nr_lba, end_lpn);
 	if ((end_lpn / nr_parts) >= spp->tt_pgs) {
@@ -1048,10 +1306,91 @@ static void conv_flush(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
 static void conv_io_mgmt_recv(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
 {
 	struct nvme_command *cmd = req->cmd;
+	struct nvme_ns_mgmt* mgmt = &cmd->ns_mgmt;
 	struct conv_ftl *conv_ftls = (struct conv_ftl *)ns->ftls;
 
-	NVMEV_INFO("%s: IO Magement Rev: %s (0x%x)\n", __func__,
-			nvme_opcode_string(cmd->common.opcode), cmd->common.opcode);
+	enum io_mgmt_recv_mo {
+		no_action					= 0x0,
+		reclaim_unit_handle_status	= 0x1,
+		vendor_specific				= 0xff,
+	};
+
+	
+	int mo = NVME_GET(mgmt->cdw10, NAMESPACE_MGMT_CDW10_MO);
+	switch (mo) {
+	case no_action:
+		NVMEV_INFO("[COMMAND] %s() NO ACTION!!\n", 
+				__func__);
+		break;
+	case reclaim_unit_handle_status:
+		int nsid = mgmt->nsid - 1;
+		NVMEV_INFO("[COMMAND] %s() Reclaim Unit Handle Status for NSID: %d\n", 
+				__func__, nsid);
+		NVMEV_INFO( "[COMMAND] ns_mgmt: opcode %x flags %x command_id %x nsid %x cdw2 %u cdw3 %u metadata 0x%p addr 0x%p metadata_len %u data_len %u cdw10 %u cdw11 %u cdw12 %u cdw13 %u cdw14 %u cdw15 %u\n",
+					mgmt->opcode,
+					mgmt->flags,
+					mgmt->command_id,
+					mgmt->nsid,
+					mgmt->cdw2,
+					mgmt->cdw3,
+					mgmt->metadata,
+					mgmt->addr,
+					mgmt->metadata_len,
+					mgmt->data_len,
+					mgmt->cdw10,
+					mgmt->cdw11,
+					mgmt->cdw12,
+					mgmt->cdw13,
+					mgmt->cdw14,
+					mgmt->cdw15);
+		NVMEV_ASSERT(nsid < MAX_NAMESPACES && nsid >= 0);
+
+		struct nvmev_ns *nsp = &nvmev_vdev->ns[nsid];
+		NVMEV_ASSERT(nsp != NULL);
+
+		struct nvmev_endg *eg = nsp->eg;
+		NVMEV_ASSERT(eg != NULL);
+
+		struct nvmev_placement_handle_list *phndls = eg->phndls;
+		NVMEV_ASSERT(phndls != NULL);
+
+		struct nvme_fdp_ruh_status* ruhs = prp_address(mgmt->addr);
+		int max_nruhsd = (((mgmt->cdw11+1)<<2) - sizeof(*ruhs)) 
+			/ sizeof(struct nvme_fdp_ruh_status_desc);
+
+		NVMEV_INFO("[COMMAND] %s() ruhs 0x%p mgmt.data_len %d max_nruhsd %d  cdw11 %d phndls->nphndls %d\n", 
+				__func__, ruhs ,mgmt->data_len, max_nruhsd, (mgmt->cdw11+1)<<2, phndls->nphndls);
+		// NVMEV_ASSERT(phndls->nphndls < max_nruhsd);
+
+		ruhs->nruhsd = min(phndls->nphndls, max_nruhsd);
+
+		int i;
+		for (i = 0; i < ruhs->nruhsd; i++) {
+			ruhs->ruhss[i].pid = phndls->phnd[i].id;
+			ruhs->ruhss[i].ruhid = phndls->phnd[i].ruh->id;
+			ruhs->ruhss[i].ruamw = 100000;
+		}
+
+		NVMEV_INFO("[COMMAND] %s() Reclaim Unit Handle Status: %d descriptor\n", 
+				__func__, ruhs->nruhsd);
+		for (i = 0; i < ruhs->nruhsd; i++) {
+			NVMEV_INFO( "Descriptor %d pid: %d ruhid: %d ruamw: %d\n",
+						i,
+						ruhs->ruhss[i].pid,
+						ruhs->ruhss[i].ruhid,
+						ruhs->ruhss[i].ruamw);
+		}
+
+		break;
+	case vendor_specific:
+		NVMEV_INFO("[COMMAND] %s() Vendor Specific\n", 
+				__func__);
+		break;
+	default:
+		NVMEV_ERROR("[COMMAND] %s() command not implemented: 0x%x\n", 
+				__func__, mo);
+	}
+
 
 }
 #endif //FDP_SIMULATOR
@@ -1064,8 +1403,12 @@ bool conv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req, struc
 
 	switch (cmd->common.opcode) {
 	case nvme_cmd_write:
+#ifdef FDP_SIMULATOR
+		struct nvmev_endg *eg = ns->eg;
+		//NVMEV_INFO("%s: %s (0x%x) fdp enable: %d\n", __func__,
+	//		nvme_opcode_string(cmd->common.opcode), cmd->common.opcode, eg->fdp_enable);
+#endif //FDP_SIMULATOR
 		if (!conv_write(ns, req, ret))
-			return false;
 		break;
 	case nvme_cmd_read:
 		if (!conv_read(ns, req, ret))

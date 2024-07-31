@@ -279,11 +279,41 @@ struct nvmev_result {
 };
 
 #ifdef FDP_SIMULATOR
+
+struct nvmev_reclaim_unit {
+	int id;
+	int written_data;
+	struct nvmev_reclaim_group *rg;
+};
+
+struct nvmev_reclaim_group {
+	uint16_t id;
+	int used_ru;
+	struct nvmev_reclaim_unit ru[64];
+};
+
+struct nvmev_reclaim_unit_handle {
+	int id;
+	struct nvmev_reclaim_unit *ru[16];
+};
+
+struct nvmev_placement_handle {
+	int id;
+	struct nvmev_reclaim_unit_handle *ruh;
+};
+
+struct nvmev_placement_handle_list {
+	uint16_t nphndls;
+	struct nvmev_placement_handle phnd[];
+};
+
 struct nvmev_endg {
 	uint16_t id;
 	bool fdp_enable;
 	struct nvmev_ns *ns[MAX_NAMESPACES];
 	unsigned int nr_ns;
+	struct nvmev_reclaim_group rg[16];
+	struct nvmev_placement_handle_list *phndls;
 };
 #endif //FDP_SIMULATOR
 
@@ -296,6 +326,10 @@ struct nvmev_ns {
 	/*conv ftl or zns or kv*/
 	uint32_t nr_parts; // partitions
 	void *ftls; // ftl instances. one ftl per partition
+#ifdef FDP_SIMULATOR
+	struct nvmev_endg *eg;
+	uint16_t nphndls;
+#endif //FDP_SIMULATOR
 
 	/*io command handler*/
 	bool (*proc_io_cmd)(struct nvmev_ns *ns, struct nvmev_request *req,

@@ -637,24 +637,15 @@ static void __nvmev_admin_ns_create(int eid)
 	struct nvme_ns_mgmt_host_sw_specified *data 
 		= prp_address(cmd->addr);
 	// ADD new Namespace in Endurance Group
-	int nsid = nvmev_vdev->eg[0].nr_ns;
 	int endgid = data->endgid;
+	int nsid = nvmev_vdev->eg[endgid].nr_ns;
 	struct nvmev_ns *ns = kmalloc(sizeof(struct nvmev_ns) , GFP_KERNEL);
 	void *ns_addr = nvmev_vdev->free_mapped;
 	const unsigned int disp_no = nvmev_vdev->config.cpu_nr_dispatcher;
 	unsigned long long size;
 
 	NVMEV_INFO("%s nvme_ns_mgmt_host_sw_specified \n", __func__);
-	NVMEV_INFO("%s\n" 
-				"\tdata->nsze %lld\n"
-				"\tdata->ncap %lld\n"
-				"\tdata->flbas %d\n"
-				"\tdata->nmic %d\n"
-				"\tdata->anagrpid %d\n"
-				"\tdata->nvmsetid %d\n"
-				"\tdata->endgid %d\n"
-				"\tdata->lbstm %lld\n"
-				"\tdata->nphndls %d\n",
+	NVMEV_INFO("%s nsze %lld ncap %lld flbas %d nmic %d anagrpid %d nvmsetid %d endgid %d lbstm %lld nphndls %d\n",
 				__func__, 
 				data->nsze,
 				data->ncap,
@@ -666,21 +657,42 @@ static void __nvmev_admin_ns_create(int eid)
 				data->lbstm,
 				data->nphndls);
 
-	NVMEV_INFO("storage size: %lld "
-			"storage_mapped 0x%p " 
-			"free_mapped 0x%p "
-			"nsid %d \n", 
+
+	//size = nvmev_vdev->config.storage_size; 
+	size = data->nsze << (data->flbas + 9);
+
+	NVMEV_INFO("storage size: %lld storage_mapped 0x%p free_mapped 0x%p nsid %d \n", 
 			nvmev_vdev->config.storage_size,
 			nvmev_vdev->storage_mapped,
 			nvmev_vdev->free_mapped,
 			nsid);
 
-	size = nvmev_vdev->config.storage_size; 
-	conv_init_namespace(ns, nsid, size, ns_addr, disp_no);
+	fdp_init_namespace(ns, nsid, size, ns_addr, disp_no, data->nphndls);
 	nvmev_vdev->free_mapped += size;
 
 
-	nvmev_vdev->eg[endgid].ns[nsid] = ns;
+
+	ns->eg = &nvmev_vdev->eg[endgid];
+	int phndls_size_bytes = sizeof(struct nvmev_placement_handle_list) +
+		data->nphndls * sizeof(struct nvmev_placement_handle);
+	struct nvmev_placement_handle_list *phndls = kmalloc(phndls_size_bytes, GFP_KERNEL);
+	int i;
+
+	phndls->nphndls = data->nphndls;
+	for (i = 0; i < phndls->nphndls; i++) {
+		struct nvmev_reclaim_unit_handle *ruh = kmalloc(sizeof(struct nvmev_reclaim_unit_handle), GFP_KERNEL);
+		int j;
+		for (j = 0; j < 16; j++) {
+			ruh->ru[j] = &ns->eg->rg[j].ru[i];
+			ruh->ru[j]->rg = &ns->eg->rg[j];
+		}
+		ruh->id = i;
+		phndls->phnd[i].ruh = ruh;
+		phndls->phnd[i].id = i;
+	}
+
+	ns->eg->phndls = phndls;
+	nvmev_vdev->ns = nvmev_vdev->eg[endgid].ns[nsid] = ns;
 	nvmev_vdev->eg[endgid].nr_ns++;
 
 }
@@ -691,15 +703,22 @@ static void __nvmev_admin_ns_delete(int eid)
 	struct nvme_ns_mgmt *cmd = &sq_entry(eid).ns_mgmt;
 
 	struct nvmev_ns *nsp = nvmev_vdev->ns;
+	if (nsp == NULL) {
+		NVMEV_INFO("[ERROR] %s() nvmev_vdev->ns is NULL\n", 
+			__func__);
+		return;
+	}
 
-	struct nvme_ns_mgmt_host_sw_specified *data 
-		= prp_address(cmd->addr);
+	struct nvmev_endg *egp = nsp->eg;
+	if (egp == NULL) {
+		NVMEV_INFO("[ERROR] %s() nvmev_vdev->ns->eg is NULL\n", 
+			__func__);
+		return;
+	}
 
-	int endgid = data->endgid;
 	int nsid = cmd->nsid -1;
+	NVMEV_ASSERT(nsid < MAX_NAMESPACES);
 
-	NVMEV_INFO("[%s] <NVME_NS_MGMT_SEL_DELETE> nsid %d\n", 
-			__func__, nsid);
 	/*
 	if (nvmev_vdev->virt_bus != NULL) {
 		pci_stop_root_bus(nvmev_vdev->virt_bus);
@@ -707,22 +726,24 @@ static void __nvmev_admin_ns_delete(int eid)
 	}
 	*/
 
-	NVMEV_INFO("[%s] <NVME_NS_MGMT_SEL_DELETE> nsid %d free_mapped : 0x%p\n", 
-			__func__, nsid, nvmev_vdev->free_mapped);
+	NVMEV_INFO("[COMMAND] %s() nsp : 0x%p nsid %d &nsp[nsid] : 0x%p nsp[nsid].size 0x%x free_mapped : 0x%p\n", 
+			__func__, nsp, nsid, &nsp[nsid], nsp[nsid].size, nvmev_vdev->free_mapped);
 
 	conv_remove_namespace(&nsp[nsid]);
 	nvmev_vdev->free_mapped -= nsp[nsid].size;
 
-	NVMEV_INFO("[%s] <NVME_NS_MGMT_SEL_DELETE> namespace addr: 0x%p free_mapped: 0x%p\n", 
+	NVMEV_INFO("[COMMAND] %s() free_mapped check namespace addr: 0x%p free_mapped: 0x%p\n", 
 			__func__, (void *)&nsp[nsid], nvmev_vdev->free_mapped);
 
-	kfree(nsp);
+	egp->nr_ns--;
+	NVMEV_INFO("[COMMAND] %s() nr_ns %d \n", 
+			__func__, egp->nr_ns);
+	egp->ns[nsid] = NULL;
+	//kfree(nsp);
 
-	nvmev_vdev->eg[endgid].nr_ns--;
-	NVMEV_INFO("[%s] <NVME_NS_MGMT_SEL_DELETE> nr_ns %d \n", 
-			__func__, nvmev_vdev->eg[endgid].nr_ns);
-	nvmev_vdev->eg[endgid].ns[nsid] = NULL;
+
 	nvmev_vdev->ns = NULL;
+	nvmev_vdev->nr_ns --;
 }
 
 static void __nvmev_admin_ns_mgmt(int eid)

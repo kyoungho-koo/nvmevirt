@@ -8,6 +8,16 @@
 #include "ssd_config.h"
 #include "ssd.h"
 
+#ifdef FDP_SIMULATOR
+struct fdpparams {
+	uint32_t gc_thres_lines;
+	uint32_t gc_thres_lines_high;
+	bool enable_gc_delay;
+
+	double op_area_pcent;
+	int pba_pcent; /* (physical space / logical space) * 100*/
+};
+#endif //FDP_SIMULATOR
 struct convparams {
 	uint32_t gc_thres_lines;
 	uint32_t gc_thres_lines_high;
@@ -67,6 +77,22 @@ struct conv_ftl {
 	struct write_flow_control wfc;
 };
 
+#ifdef FDP_SIMULATOR
+struct fdp_ftl {
+	struct ssd *ssd;
+
+	struct convparams cp;
+	struct ppa *maptbl; /* page level mapping table */
+	uint64_t *rmap; /* reverse mapptbl, assume it's stored in OOB */
+	struct write_pointer wp;
+	struct write_pointer gc_wp;
+	struct line_mgmt lm;
+	struct write_flow_control wfc;
+};
+
+void fdp_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *mapped_addr,
+			 uint32_t cpu_nr_dispatcher, uint32_t nphndls);
+#endif //FDP_SIMULATOR
 void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *mapped_addr,
 			 uint32_t cpu_nr_dispatcher);
 

@@ -502,6 +502,8 @@ enum nvme_ns_mgmt_sel {
 };
 
 enum nvme_cmd_dword_fields {
+	NVME_READ_WRITE_CDW13_DSPEC_SHIFT			= 16,
+	NVME_READ_WRITE_CDW13_DSPEC_MASK			= 0xff,
     NVME_GET_FEATURES_CDW10_SEL_SHIFT           = 8,
     NVME_GET_FEATURES_CDW10_SEL_MASK            = 0x7,
     NVME_SET_FEATURES_CDW10_SAVE_SHIFT          = 31,
@@ -514,6 +516,27 @@ enum nvme_cmd_dword_fields {
 	NVME_NAMESPACE_ATTACH_CDW10_SEL_MASK		= 0xf,
 	NVME_NAMESPACE_MGMT_CDW10_SEL_SHIFT			= 0,
 	NVME_NAMESPACE_MGMT_CDW10_SEL_MASK			= 0xf,
+	/**
+	 * Management Operation (MO): this field specifies the management operation to perform.
+	 *
+	 *	Value	|	Description
+	 *	==================================================================
+	 *	00h		|	No action	
+	 *	------------------------------------------------------------------
+	 *	01h		|	Reclaim Unit Handle Status: For each Placement Handle
+	 *			|	of the namespace, the controller shall return a Reclaim
+	 *			|	Unit Handle Status Descriptor for each Reclaim Group.
+	 *	-------------------------------------------------------------------
+	 *	FFh		|	Vendor specific
+	 *	-------------------------------------------------------------------
+	 *	others	|	Reserved
+	 *
+	 */
+	NVME_NAMESPACE_MGMT_CDW10_MO_SHIFT			= 0,
+	NVME_NAMESPACE_MGMT_CDW10_MO_MASK			= 0xf,
+	// Management Operation Specific (MOS):
+	NVME_NAMESPACE_MGMT_CDW10_MOS_SHIFT			= 16,
+	NVME_NAMESPACE_MGMT_CDW10_MOS_MASK			= 0xff,
 	NVME_NAMESPACE_MGMT_CDW11_CSI_SHIFT			= 24,
 	NVME_NAMESPACE_MGMT_CDW11_CSI_MASK			= 0xff,
 };
@@ -783,6 +806,42 @@ struct nvme_ns_mgmt_host_sw_specified {
 	};
 	__le16		phndl[128];
 	__u8		rsvd768[3328];
+};
+
+
+/*
+ * struct nvme_fdp_ruh_status_desc
+ * specified field.
+ * @pid:	Placement Identifier (PID) contain the Placement Handle and
+ *			Reclaim Group Identifier for this Reclaim Unit Handle Status
+ *			Descriptor.
+ * @ruhid:	Reclaim Unit Handle Identifier indicates the Reclaim Unit Handle
+ *			for the Placement Identifier field.
+ * @earutr: This field indicates an estimate of the time in seconds that the 
+ *			Reclaim Unit currently referenced by the Reclaim Unit Handle is 
+ *			allowed to remain referenced by that Reclaim Unit Handle before the
+ *			controller may modify the Reclaim Unit Handle to reference a different
+ *			Reclaim Unit. This value is the remaining time at the time the Get Log
+ *			Page command is processed by the controller.
+ * @ruamw:	This field indicates the number of logical blocks which are currently 
+ *			able to be written to the media associated with the Reclaim Unit currently
+ *			referrenced by the Placement Identifier field.
+ * @rsvd:	Reserved
+ */
+struct nvme_fdp_ruh_status_desc {
+	__u16 pid;
+	__u16 ruhid;
+	__u32 earutr;
+	__u64 ruamw;
+	__u8  rsvd16[16];
+};
+/*
+ * struct nvme_fdp_ruh_status 
+ */
+struct nvme_fdp_ruh_status {
+	__u8 rsvd0[14];
+	__le16 nruhsd;
+	struct nvme_fdp_ruh_status_desc ruhss[];
 };
 #endif //FDP_SIMULATOR
 

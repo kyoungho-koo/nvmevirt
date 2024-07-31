@@ -525,6 +525,17 @@ static void NVMEV_ENDURANCEGROUP_INIT(struct nvmev_dev *nvmev_vdev)
 	eg->id = 0;
 	eg->fdp_enable = 0;
 
+	for (i = 0; i < 16; i++) {
+		int j;
+		eg->rg[i].id = i;
+		eg->rg[i].used_ru = 0;
+		for (j = 0; j < 64; j++) {
+			eg->rg[i].ru[j].id = 64*i + j;
+			eg->rg[i].ru[j].written_data = 0;
+		}
+	}
+	
+
 	nvmev_vdev->eg = eg;
 	nvmev_vdev->nr_eg = nr_eg;
 }
@@ -567,6 +578,7 @@ static void NVMEV_NAMESPACE_INIT(struct nvmev_dev *nvmev_vdev)
 			BUG_ON(1);
 
 #ifdef FDP_SIMULATOR
+		ns->eg = &nvmev_vdev->eg[0];
 		nvmev_vdev->eg[0].ns[i] = &ns[i];
 #endif //FDP_SIMULATOR
 		remaining_capacity -= size;
@@ -581,6 +593,8 @@ static void NVMEV_NAMESPACE_INIT(struct nvmev_dev *nvmev_vdev)
 	// For Dynamic Allocate Namespace
 	nvmev_vdev->free_mapped = ns_addr;
 	nvmev_vdev->eg[0].nr_ns = nr_ns;
+	NVMEV_INFO("[%s] nr_ns %d \n", 
+			__func__, nvmev_vdev->eg[0].nr_ns);
 #endif //FDP_SIMULATOR
 }
 
