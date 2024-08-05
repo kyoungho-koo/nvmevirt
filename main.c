@@ -524,6 +524,7 @@ static void NVMEV_ENDURANCEGROUP_INIT(struct nvmev_dev *nvmev_vdev)
 
 	eg->id = 0;
 	eg->fdp_enable = 0;
+	eg->size = 0;
 
 	for (i = 0; i < 16; i++) {
 		int j;
@@ -531,7 +532,7 @@ static void NVMEV_ENDURANCEGROUP_INIT(struct nvmev_dev *nvmev_vdev)
 		eg->rg[i].used_ru = 0;
 		for (j = 0; j < 64; j++) {
 			eg->rg[i].ru[j].id = 64*i + j;
-			eg->rg[i].ru[j].written_data = 0;
+			eg->rg[i].ru[j].ruamw = 0;
 		}
 	}
 	
@@ -579,6 +580,7 @@ static void NVMEV_NAMESPACE_INIT(struct nvmev_dev *nvmev_vdev)
 
 #ifdef FDP_SIMULATOR
 		ns->eg = &nvmev_vdev->eg[0];
+		ns->eg->size += size;
 		nvmev_vdev->eg[0].ns[i] = &ns[i];
 #endif //FDP_SIMULATOR
 		remaining_capacity -= size;

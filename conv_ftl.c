@@ -1203,10 +1203,26 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
 	if (dspec != 0) {
 		NVMEV_INFO("[DSPEC] %s() dspec: %d\n", __func__,dspec,);
 	}
+	*/
 	NVMEV_ASSERT(ns->eg != NULL);
+
 	struct nvmev_placement_handle_list *phndls = ns->eg->phndls;
 	NVMEV_ASSERT(phndls != NULL);
-	*/
+	
+	if (dspec < phndls->nphndls) {
+		struct nvmev_reclaim_unit_handle *ruh = phndls->phnd[dspec].ruh;
+		NVMEV_ASSERT(ruh != NULL);
+		int i;
+		for (i = 0; i < 16; i++) {
+			struct nvmev_reclaim_unit *ru = ruh->ru[i];
+			NVMEV_ASSERT(ru != NULL);
+			ru->ruamw -= nr_lba/16;
+		}
+	} else {
+		NVMEV_INFO("[DSPEC] %s() Out of Bound (dspec: %d) \n", __func__,dspec);
+	}
+
+
 
 #endif //FDP_SIMULATOR
 
@@ -1367,8 +1383,14 @@ static void conv_io_mgmt_recv(struct nvmev_ns *ns, struct nvmev_request *req, st
 		int i;
 		for (i = 0; i < ruhs->nruhsd; i++) {
 			ruhs->ruhss[i].pid = phndls->phnd[i].id;
-			ruhs->ruhss[i].ruhid = phndls->phnd[i].ruh->id;
-			ruhs->ruhss[i].ruamw = 100000;
+
+			struct nvmev_reclaim_unit_handle *ruh = phndls->phnd[i].ruh;
+			ruhs->ruhss[i].ruhid = ruh->id;
+			for (i = 0; i < 16; i++) {
+				struct nvmev_reclaim_unit *ru = ruh->ru[i];
+				NVMEV_ASSERT(ru != NULL);
+				ruhs->ruhss[i].ruamw += ru->ruamw;
+			}
 		}
 
 		NVMEV_INFO("[COMMAND] %s() Reclaim Unit Handle Status: %d descriptor\n", 
@@ -1390,8 +1412,6 @@ static void conv_io_mgmt_recv(struct nvmev_ns *ns, struct nvmev_request *req, st
 		NVMEV_ERROR("[COMMAND] %s() command not implemented: 0x%x\n", 
 				__func__, mo);
 	}
-
-
 }
 #endif //FDP_SIMULATOR
 
@@ -1403,11 +1423,11 @@ bool conv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req, struc
 
 	switch (cmd->common.opcode) {
 	case nvme_cmd_write:
-#ifdef FDP_SIMULATOR
-		struct nvmev_endg *eg = ns->eg;
+//#ifdef FDP_SIMULATOR
+	//	struct nvmev_endg *eg = ns->eg;
 		//NVMEV_INFO("%s: %s (0x%x) fdp enable: %d\n", __func__,
 	//		nvme_opcode_string(cmd->common.opcode), cmd->common.opcode, eg->fdp_enable);
-#endif //FDP_SIMULATOR
+//#endif //FDP_SIMULATOR
 		if (!conv_write(ns, req, ret))
 		break;
 	case nvme_cmd_read:

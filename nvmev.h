@@ -282,7 +282,7 @@ struct nvmev_result {
 
 struct nvmev_reclaim_unit {
 	int id;
-	int written_data;
+	int ruamw;
 	struct nvmev_reclaim_group *rg;
 };
 
@@ -310,8 +310,9 @@ struct nvmev_placement_handle_list {
 struct nvmev_endg {
 	uint16_t id;
 	bool fdp_enable;
-	struct nvmev_ns *ns[MAX_NAMESPACES];
 	unsigned int nr_ns;
+	struct nvmev_ns *ns[MAX_NAMESPACES];
+	unsigned long long size;
 	struct nvmev_reclaim_group rg[16];
 	struct nvmev_placement_handle_list *phndls;
 };

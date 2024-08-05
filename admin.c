@@ -541,6 +541,7 @@ static void __nvmev_admin_set_features(int eid)
 		int endg_id;
 		int fdp_config_idx;
 		bool fdp_enable;
+		struct nvmev_endg *eg;
 
 		if (!NVME_GET(cmd->fid ,SET_FEATURES_CDW10_SAVE)) {
 			result0 = 0;
@@ -552,7 +553,19 @@ static void __nvmev_admin_set_features(int eid)
 		fdp_config_idx = ((sq_entry(eid).features.rsvd12[0] >> 8)  & 0xFFFF);
 		fdp_enable = (sq_entry(eid).features.rsvd12[0]  & 0xF);
 
-		nvmev_vdev->eg[endg_id].fdp_enable = fdp_enable;
+		eg = &nvmev_vdev->eg[endg_id];
+		eg->fdp_enable = fdp_enable;
+		if (eg->fdp_enable) {
+			int i;
+			int j;
+			int ruamw = eg->size / 16 / 64 / 512;
+			for (i = 0; i < 16; i++) {
+				for (j = 0; j < 64; j++) {
+					eg->rg[i].ru[j].ruamw = ruamw;
+				}
+			}
+		}
+
 		result0 = 0;
 		result1 = 1;
 		//result0 = ((nvmev_vdev->nr_cq - 1) << 16 | (nvmev_vdev->nr_sq - 1));
@@ -729,8 +742,10 @@ static void __nvmev_admin_ns_delete(int eid)
 	NVMEV_INFO("[COMMAND] %s() nsp : 0x%p nsid %d &nsp[nsid] : 0x%p nsp[nsid].size 0x%x free_mapped : 0x%p\n", 
 			__func__, nsp, nsid, &nsp[nsid], nsp[nsid].size, nvmev_vdev->free_mapped);
 
-	conv_remove_namespace(&nsp[nsid]);
 	nvmev_vdev->free_mapped -= nsp[nsid].size;
+	egp->size -= nsp[nsid].size;
+
+	conv_remove_namespace(&nsp[nsid]);
 
 	NVMEV_INFO("[COMMAND] %s() free_mapped check namespace addr: 0x%p free_mapped: 0x%p\n", 
 			__func__, (void *)&nsp[nsid], nvmev_vdev->free_mapped);
