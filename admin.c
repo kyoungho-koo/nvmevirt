@@ -558,12 +558,14 @@ static void __nvmev_admin_set_features(int eid)
 		if (eg->fdp_enable) {
 			int i;
 			int j;
-			int ruamw = eg->size / 16 / 64 / 512;
+			uint32_t ruamw = eg->size / 16 / 64 / 512;
 			for (i = 0; i < 16; i++) {
 				for (j = 0; j < 64; j++) {
 					eg->rg[i].ru[j].ruamw = ruamw;
 				}
 			}
+			NVMEV_INFO("%s: NVME_FEAT_FDP  endg_id: %d fdp_config_idx: %d fdp_enable: %d\n", 
+					__func__, endg_id, fdp_config_idx, nvmev_vdev->eg[endg_id].fdp_enable);
 		}
 
 		result0 = 0;
@@ -696,9 +698,12 @@ static void __nvmev_admin_ns_create(int eid)
 		struct nvmev_reclaim_unit_handle *ruh = kmalloc(sizeof(struct nvmev_reclaim_unit_handle), GFP_KERNEL);
 		int j;
 		for (j = 0; j < 16; j++) {
+			// Initialize Reclaim Unit Handle
 			ruh->ru[j] = &ns->eg->rg[j].ru[i];
-			ruh->ru[j]->rg = &ns->eg->rg[j];
+			ruh->ru[j]->ruh = ruh;
+			ruh->ru[j]->ref_cnt++;
 		}
+
 		ruh->id = i;
 		phndls->phnd[i].ruh = ruh;
 		phndls->phnd[i].id = i;
@@ -707,7 +712,6 @@ static void __nvmev_admin_ns_create(int eid)
 	ns->eg->phndls = phndls;
 	nvmev_vdev->ns = nvmev_vdev->eg[endgid].ns[nsid] = ns;
 	nvmev_vdev->eg[endgid].nr_ns++;
-
 }
 
 static void __nvmev_admin_ns_delete(int eid)

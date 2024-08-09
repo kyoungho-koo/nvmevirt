@@ -1167,6 +1167,82 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
 	return true;
 }
 
+#ifdef FDP_SIMULATOR
+static bool is_ru_available(struct nvmev_reclaim_unit *ru) {
+	if (ru->ref_cnt != 0) {
+		return false;
+	}
+
+	if (ru->ruh != NULL) {
+		// if ref_cnt is 0, this ru doesn't referenced by a ruh
+		return false;
+	}
+	
+	if (ru->ruamw <= 0 ) {
+		return false;
+	}
+
+	return true;
+}
+
+static void ru_write (struct nvmev_reclaim_unit *ru, uint64_t nr_lba) {
+	NVMEV_ASSERT(ru != NULL);
+
+check_size:
+	if (ru->ruamw > nr_lba)
+		goto ru_write;
+
+	struct nvmev_reclaim_unit_handle *ruh = ru->ruh;
+	struct nvmev_reclaim_group *rg = ru->rg;
+	NVMEV_ASSERT(ruh != NULL);
+	NVMEV_ASSERT(rg != NULL);
+
+
+	NVMEV_INFO("%s() rg %d ru %d nr_lba %d ru->ruamw %d\n", 
+			__func__, rg->id, ru->id, nr_lba, ru->ruamw);
+	nr_lba -= ru->ruamw;
+	ru->ruamw = 0;
+
+	// Dereferrence RU
+	ru->ref_cnt--;
+	ru->ruh = NULL;
+
+	// Find New Reclaim Unit
+	int i;
+	for (i = 1; i < 64; i++) {
+		int ru_idx = (ru->id + i) % 64;
+		if (is_ru_available(&rg->ru[ru_idx])) {
+			ru =  &rg->ru[ru_idx];
+			ru->ruh = ruh;
+			ruh->ru[rg->id] = ru;
+			ru->ref_cnt ++;
+			NVMEV_INFO("%s() find new RU rg %d ru %d nr_lba %d ru->ruamw %d\n", 
+					__func__, rg->id, ru->id, nr_lba, ru->ruamw);
+			goto check_size;
+		}
+	}
+
+ru_write:
+	ru->ruamw -= nr_lba;
+}
+
+static void write_on_placement (struct nvmev_placement_handle_list *phndls, uint32_t phid, uint64_t nr_lba) {
+	NVMEV_ASSERT(phndls != NULL);
+	
+	if (phid < phndls->nphndls) {
+		struct nvmev_reclaim_unit_handle *ruh = phndls->phnd[phid].ruh;
+		NVMEV_ASSERT(ruh != NULL);
+		int i;
+		for (i = 0; i < 16; i++) {
+			ru_write (ruh->ru[i], nr_lba/16);
+		}
+	} else {
+		NVMEV_INFO("[DSPEC] %s() Out of Bound (phid: %d) \n", __func__,phid);
+	}
+}
+
+#endif //FDP_SIMULATOR
+
 static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
 {
 	struct conv_ftl *conv_ftls = (struct conv_ftl *)ns->ftls;
@@ -1206,23 +1282,9 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
 	*/
 	NVMEV_ASSERT(ns->eg != NULL);
 
-	struct nvmev_placement_handle_list *phndls = ns->eg->phndls;
-	NVMEV_ASSERT(phndls != NULL);
-	
-	if (dspec < phndls->nphndls) {
-		struct nvmev_reclaim_unit_handle *ruh = phndls->phnd[dspec].ruh;
-		NVMEV_ASSERT(ruh != NULL);
-		int i;
-		for (i = 0; i < 16; i++) {
-			struct nvmev_reclaim_unit *ru = ruh->ru[i];
-			NVMEV_ASSERT(ru != NULL);
-			ru->ruamw -= nr_lba/16;
-		}
-	} else {
-		NVMEV_INFO("[DSPEC] %s() Out of Bound (dspec: %d) \n", __func__,dspec);
+	if (ns->eg->fdp_enable) {
+		write_on_placement(ns->eg->phndls, dspec, nr_lba);
 	}
-
-
 
 #endif //FDP_SIMULATOR
 
@@ -1367,48 +1429,77 @@ static void conv_io_mgmt_recv(struct nvmev_ns *ns, struct nvmev_request *req, st
 		struct nvmev_endg *eg = nsp->eg;
 		NVMEV_ASSERT(eg != NULL);
 
+		if (!eg->fdp_enable) {
+			ret->status = NVME_SC_FDP_DISABLED;
+			return;
+		}
+
 		struct nvmev_placement_handle_list *phndls = eg->phndls;
 		NVMEV_ASSERT(phndls != NULL);
 
 		struct nvme_fdp_ruh_status* ruhs = prp_address(mgmt->addr);
-		int max_nruhsd = (((mgmt->cdw11+1)<<2) - sizeof(*ruhs)) 
-			/ sizeof(struct nvme_fdp_ruh_status_desc);
 
-		NVMEV_INFO("[COMMAND] %s() ruhs 0x%p mgmt.data_len %d max_nruhsd %d  cdw11 %d phndls->nphndls %d\n", 
-				__func__, ruhs ,mgmt->data_len, max_nruhsd, (mgmt->cdw11+1)<<2, phndls->nphndls);
+		int remain_data_len = (mgmt->cdw11+1) << 2;
+		
+		if (remain_data_len >= sizeof(*ruhs)) {
+			ruhs->nruhsd = phndls->nphndls;
+			remain_data_len -= sizeof(*ruhs);
+		} else {
+			ret->status = NVME_SC_SUCCESS;
+			return;
+		}
+
+		int max_nruhsd = remain_data_len / sizeof(struct nvme_fdp_ruh_status_desc);
+		int res_nruhsd = min(phndls->nphndls, max_nruhsd);
+
+		//NVMEV_INFO("[COMMAND] %s() ruhs 0x%p mgmt.data_len %d max_nruhsd %d  data_len %d phndls->nphndls %d\n", 
+		//			__func__, ruhs ,mgmt->data_len, max_nruhsd, (mgmt->cdw11+1)<<2, phndls->nphndls);
 		// NVMEV_ASSERT(phndls->nphndls < max_nruhsd);
 
-		ruhs->nruhsd = min(phndls->nphndls, max_nruhsd);
-
 		int i;
-		for (i = 0; i < ruhs->nruhsd; i++) {
+		for (i = 0; i < res_nruhsd; i++) {
 			ruhs->ruhss[i].pid = phndls->phnd[i].id;
 
 			struct nvmev_reclaim_unit_handle *ruh = phndls->phnd[i].ruh;
 			ruhs->ruhss[i].ruhid = ruh->id;
-			for (i = 0; i < 16; i++) {
-				struct nvmev_reclaim_unit *ru = ruh->ru[i];
+			ruhs->ruhss[i].ruamw = 0;
+			int j;
+			for (j = 0; j < 16; j++) {
+				struct nvmev_reclaim_unit *ru = ruh->ru[j];
 				NVMEV_ASSERT(ru != NULL);
 				ruhs->ruhss[i].ruamw += ru->ruamw;
 			}
 		}
 
-		NVMEV_INFO("[COMMAND] %s() Reclaim Unit Handle Status: %d descriptor\n", 
-				__func__, ruhs->nruhsd);
-		for (i = 0; i < ruhs->nruhsd; i++) {
+		NVMEV_INFO("[COMMAND] %s() Reclaim Unit Handle Status: Send %d descriptor\n", 
+				__func__, res_nruhsd);
+		for (i = 0; i < res_nruhsd ; i++) {
 			NVMEV_INFO( "Descriptor %d pid: %d ruhid: %d ruamw: %d\n",
 						i,
 						ruhs->ruhss[i].pid,
 						ruhs->ruhss[i].ruhid,
 						ruhs->ruhss[i].ruamw);
+			struct nvmev_reclaim_unit_handle *ruh = phndls->phnd[i].ruh;
+			int j;
+			for (j = 0; j < 16; j++) {
+				struct nvmev_reclaim_unit *ru = ruh->ru[j];
+				NVMEV_INFO( " RU %d ruid: %d ref_cnt: %d ruamw: %d\n",
+							j,
+							ru->id,
+							ru->ref_cnt,
+							ru->ruamw);
+			}
 		}
+		ret->status = NVME_SC_SUCCESS;
 
 		break;
 	case vendor_specific:
+		ret->status = NVME_SC_INVALID_FIELD;
 		NVMEV_INFO("[COMMAND] %s() Vendor Specific\n", 
 				__func__);
 		break;
 	default:
+		ret->status = NVME_SC_INVALID_FIELD;
 		NVMEV_ERROR("[COMMAND] %s() command not implemented: 0x%x\n", 
 				__func__, mo);
 	}

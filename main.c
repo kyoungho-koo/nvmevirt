@@ -531,8 +531,13 @@ static void NVMEV_ENDURANCEGROUP_INIT(struct nvmev_dev *nvmev_vdev)
 		eg->rg[i].id = i;
 		eg->rg[i].used_ru = 0;
 		for (j = 0; j < 64; j++) {
+			// Initialize all Reclaim Unit
 			eg->rg[i].ru[j].id = 64*i + j;
 			eg->rg[i].ru[j].ruamw = 0;
+			eg->rg[i].ru[j].ref_cnt = 0;
+			eg->rg[i].ru[j].ruh = NULL;
+			eg->rg[i].ru[j].rg = &eg->rg[i];
+
 		}
 	}
 	

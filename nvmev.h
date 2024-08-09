@@ -282,7 +282,9 @@ struct nvmev_result {
 
 struct nvmev_reclaim_unit {
 	int id;
-	int ruamw;
+	uint32_t ref_cnt;
+	uint32_t ruamw;
+	struct nvmev_reclaim_unit_handle *ruh;
 	struct nvmev_reclaim_group *rg;
 };
 
