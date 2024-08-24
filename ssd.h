@@ -35,6 +35,9 @@ enum {
 enum {
 	USER_IO = 0,
 	GC_IO = 1,
+#ifdef FDP_SIMULATOR
+	FDP_IO = 2,
+#endif //FDP_SIMULATOR
 };
 
 enum {
@@ -160,6 +163,13 @@ struct ssdparams {
 	int nchs; /* # of channels in the SSD */
 	int cell_mode;
 
+#ifdef FDP_SIMULATOR
+	int fdp_enabled;
+	int nphndls;
+	int blks_per_ru;
+	int ru_nchs; /* # of channels in the Reclaim Unit */
+#endif // FDP_SIMULATOR
+
 	/* Unit size of NVMe write command
        Transfer size should be multiple of it */
 	int write_unit_size;
@@ -252,6 +262,11 @@ static inline uint32_t get_cell(struct ssd *ssd, struct ppa *ppa)
 	struct ssdparams *spp = &ssd->sp;
 	return (ppa->g.pg / spp->pgs_per_flashpg) % (spp->cell_mode);
 }
+
+
+#ifdef FDP_SIMULATOR
+void ssd_init_fdp_params(struct ssdparams *spp, uint64_t capacity, uint32_t nparts, uint32_t nphndls);
+#endif //FDP_SIMULATOR
 
 void ssd_init_params(struct ssdparams *spp, uint64_t capacity, uint32_t nparts);
 void ssd_init(struct ssd *ssd, struct ssdparams *spp, uint32_t cpu_nr_dispatcher);

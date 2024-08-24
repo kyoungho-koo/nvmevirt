@@ -685,8 +685,6 @@ static void __nvmev_admin_ns_create(int eid)
 	fdp_init_namespace(ns, nsid, size, ns_addr, disp_no, data->nphndls);
 	nvmev_vdev->free_mapped += size;
 
-
-
 	ns->eg = &nvmev_vdev->eg[endgid];
 	int phndls_size_bytes = sizeof(struct nvmev_placement_handle_list) +
 		data->nphndls * sizeof(struct nvmev_placement_handle);
@@ -697,7 +695,7 @@ static void __nvmev_admin_ns_create(int eid)
 	for (i = 0; i < phndls->nphndls; i++) {
 		struct nvmev_reclaim_unit_handle *ruh = kmalloc(sizeof(struct nvmev_reclaim_unit_handle), GFP_KERNEL);
 		int j;
-		for (j = 0; j < 16; j++) {
+		for (j = 0; j < RECLAIM_GROUPS; j++) {
 			// Initialize Reclaim Unit Handle
 			ruh->ru[j] = &ns->eg->rg[j].ru[i];
 			ruh->ru[j]->ruh = ruh;

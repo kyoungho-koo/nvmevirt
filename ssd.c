@@ -63,6 +63,119 @@ static void check_params(struct ssdparams *spp)
 	//ftl_assert(is_power_of_2(spp->nchs));
 }
 
+#ifdef FDP_SIMULATOR 
+void ssd_init_fdp_params(struct ssdparams *spp, uint64_t capacity, uint32_t nparts, uint32_t nphndls)
+{
+	uint64_t blk_size, total_size;
+
+	spp->secsz = LBA_SIZE;
+	spp->secs_per_pg = 4096 / LBA_SIZE; // pg == 4KB
+	spp->pgsz = spp->secsz * spp->secs_per_pg;
+
+	spp->nchs = NAND_CHANNELS;
+	spp->pls_per_lun = PLNS_PER_LUN;
+	spp->luns_per_ch = LUNS_PER_NAND_CH;
+	spp->cell_mode = CELL_MODE;
+
+	/* for FDP */
+	spp->fdp_enabled = 1;
+	spp->nphndls = nphndls;
+	spp->ru_nchs = RU_CHANNELS;
+
+	/* partitioning SSD by dividing channel*/
+	NVMEV_ASSERT((spp->nchs % nparts) == 0);
+	spp->nchs /= nparts;
+	capacity /= nparts;
+
+	if (BLKS_PER_PLN > 0) {
+		/* flashpgs_per_blk depends on capacity */
+		spp->blks_per_pl = BLKS_PER_PLN;
+		blk_size = DIV_ROUND_UP(capacity, spp->blks_per_pl * spp->pls_per_lun *
+							  spp->luns_per_ch * spp->nchs);
+	} else {
+		NVMEV_ASSERT(BLK_SIZE > 0);
+		blk_size = BLK_SIZE;
+		spp->blks_per_pl = DIV_ROUND_UP(capacity, blk_size * spp->pls_per_lun *
+								  spp->luns_per_ch * spp->nchs);
+	}
+
+	NVMEV_ASSERT((ONESHOT_PAGE_SIZE % spp->pgsz) == 0 && (FLASH_PAGE_SIZE % spp->pgsz) == 0);
+	NVMEV_ASSERT((ONESHOT_PAGE_SIZE % FLASH_PAGE_SIZE) == 0);
+
+	spp->pgs_per_oneshotpg = ONESHOT_PAGE_SIZE / (spp->pgsz);
+	spp->oneshotpgs_per_blk = DIV_ROUND_UP(blk_size, ONESHOT_PAGE_SIZE);
+
+	spp->pgs_per_flashpg = FLASH_PAGE_SIZE / (spp->pgsz);
+	spp->flashpgs_per_blk = (ONESHOT_PAGE_SIZE / FLASH_PAGE_SIZE) * spp->oneshotpgs_per_blk;
+
+	spp->pgs_per_blk = spp->pgs_per_oneshotpg * spp->oneshotpgs_per_blk;
+
+	spp->write_unit_size = WRITE_UNIT_SIZE;
+
+	spp->pg_4kb_rd_lat[CELL_TYPE_LSB] = NAND_4KB_READ_LATENCY_LSB;
+	spp->pg_4kb_rd_lat[CELL_TYPE_MSB] = NAND_4KB_READ_LATENCY_MSB;
+	spp->pg_4kb_rd_lat[CELL_TYPE_CSB] = NAND_4KB_READ_LATENCY_CSB;
+	spp->pg_rd_lat[CELL_TYPE_LSB] = NAND_READ_LATENCY_LSB;
+	spp->pg_rd_lat[CELL_TYPE_MSB] = NAND_READ_LATENCY_MSB;
+	spp->pg_rd_lat[CELL_TYPE_CSB] = NAND_READ_LATENCY_CSB;
+	spp->pg_wr_lat = NAND_PROG_LATENCY;
+	spp->blk_er_lat = NAND_ERASE_LATENCY;
+	spp->max_ch_xfer_size = MAX_CH_XFER_SIZE;
+
+	spp->fw_4kb_rd_lat = FW_4KB_READ_LATENCY;
+	spp->fw_rd_lat = FW_READ_LATENCY;
+	spp->fw_ch_xfer_lat = FW_CH_XFER_LATENCY;
+	spp->fw_wbuf_lat0 = FW_WBUF_LATENCY0;
+	spp->fw_wbuf_lat1 = FW_WBUF_LATENCY1;
+
+	spp->ch_bandwidth = NAND_CHANNEL_BANDWIDTH;
+	spp->pcie_bandwidth = PCIE_BANDWIDTH;
+
+	spp->write_buffer_size = GLOBAL_WB_SIZE;
+	spp->write_early_completion = WRITE_EARLY_COMPLETION;
+
+	/* calculated values */
+	spp->secs_per_blk = spp->secs_per_pg * spp->pgs_per_blk;
+	spp->secs_per_pl = spp->secs_per_blk * spp->blks_per_pl;
+	spp->secs_per_lun = spp->secs_per_pl * spp->pls_per_lun;
+	spp->secs_per_ch = spp->secs_per_lun * spp->luns_per_ch;
+	spp->tt_secs = spp->secs_per_ch * spp->nchs;
+
+	spp->pgs_per_pl = spp->pgs_per_blk * spp->blks_per_pl;
+	spp->pgs_per_lun = spp->pgs_per_pl * spp->pls_per_lun;
+	spp->pgs_per_ch = spp->pgs_per_lun * spp->luns_per_ch;
+	spp->tt_pgs = spp->pgs_per_ch * spp->nchs;
+
+	spp->blks_per_lun = spp->blks_per_pl * spp->pls_per_lun;
+	spp->blks_per_ch = spp->blks_per_lun * spp->luns_per_ch;
+	spp->tt_blks = spp->blks_per_ch * spp->nchs;
+
+	spp->pls_per_ch = spp->pls_per_lun * spp->luns_per_ch;
+	spp->tt_pls = spp->pls_per_ch * spp->nchs;
+
+	spp->tt_luns = spp->luns_per_ch * spp->nchs;
+
+	/* line is special, put it at the end */
+	spp->blks_per_line = spp->tt_luns; /* TODO: to fix under multiplanes */
+	spp->pgs_per_line = spp->blks_per_line * spp->pgs_per_blk;
+	spp->secs_per_line = spp->pgs_per_line * spp->secs_per_pg;
+	spp->tt_lines = spp->blks_per_lun;
+	/* TODO: to fix under multiplanes */ // lun size is super-block(line) size
+
+	check_params(spp);
+
+	total_size = (unsigned long)spp->tt_luns * spp->blks_per_lun * spp->pgs_per_blk *
+		     spp->secsz * spp->secs_per_pg;
+	blk_size = spp->pgs_per_blk * spp->secsz * spp->secs_per_pg;
+	NVMEV_INFO(
+		"Total Capacity(GiB,MiB)=%llu,%llu chs=%u luns=%lu lines=%lu blk-size(MiB,KiB)=%u,%u line-size(MiB,KiB)=%lu,%lu",
+		BYTE_TO_GB(total_size), BYTE_TO_MB(total_size), spp->nchs, spp->tt_luns,
+		spp->tt_lines, BYTE_TO_MB(spp->pgs_per_blk * spp->pgsz),
+		BYTE_TO_KB(spp->pgs_per_blk * spp->pgsz), BYTE_TO_MB(spp->pgs_per_line * spp->pgsz),
+		BYTE_TO_KB(spp->pgs_per_line * spp->pgsz));
+}
+#endif //FDP_SIMULATOR
+
 void ssd_init_params(struct ssdparams *spp, uint64_t capacity, uint32_t nparts)
 {
 	uint64_t blk_size, total_size;
@@ -75,6 +188,9 @@ void ssd_init_params(struct ssdparams *spp, uint64_t capacity, uint32_t nparts)
 	spp->pls_per_lun = PLNS_PER_LUN;
 	spp->luns_per_ch = LUNS_PER_NAND_CH;
 	spp->cell_mode = CELL_MODE;
+#ifdef FDP_SIMULATOR
+	spp->fdp_enabled = 0;
+#endif //FDP_SIMULATOR
 
 	/* partitioning SSD by dividing channel*/
 	NVMEV_ASSERT((spp->nchs % nparts) == 0);

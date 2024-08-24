@@ -537,10 +537,8 @@ static void NVMEV_ENDURANCEGROUP_INIT(struct nvmev_dev *nvmev_vdev)
 			eg->rg[i].ru[j].ref_cnt = 0;
 			eg->rg[i].ru[j].ruh = NULL;
 			eg->rg[i].ru[j].rg = &eg->rg[i];
-
 		}
 	}
-	
 
 	nvmev_vdev->eg = eg;
 	nvmev_vdev->nr_eg = nr_eg;

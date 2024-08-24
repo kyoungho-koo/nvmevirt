@@ -65,6 +65,7 @@ struct write_flow_control {
 	uint32_t credits_to_refill;
 };
 
+
 struct conv_ftl {
 	struct ssd *ssd;
 
@@ -78,6 +79,49 @@ struct conv_ftl {
 };
 
 #ifdef FDP_SIMULATOR
+struct ru_params {
+	int start_ch; /* start channel */
+	int nchs_per_ru; /* # of channels in the Reclaim Unit */
+	int luns_per_ru; /* # of luns in the Reclaim Unit */
+	int blks_per_ru; /* # of blks in the Reclaim Unit */
+
+};
+
+struct fdp_reclaim_unit {
+	struct ru_params rp;
+
+	int id;
+	uint32_t ref_cnt;
+	uint32_t ruamw;
+	uint32_t blks;
+	struct fdp_reclaim_group *rg;
+	struct fdp_reclaim_unit_handle *ruh;
+	struct write_pointer wp;
+	struct write_pointer gc_wp;
+};
+
+struct fdp_reclaim_group {
+	uint16_t id;
+	int used_ru;
+	struct fdp_reclaim_unit ru[RU_PER_RG];
+};
+
+struct fdp_reclaim_unit_handle {
+	int id;
+	int ru_idx;
+	struct fdp_reclaim_unit *ru[RG_PER_FTL];
+};
+
+struct fdp_placement_handle {
+	int id;
+	struct fdp_reclaim_unit_handle *ruh;
+};
+
+struct fdp_placement_handle_list {
+	uint16_t nphndls;
+	struct fdp_placement_handle phnd[];
+};
+
 struct fdp_ftl {
 	struct ssd *ssd;
 
@@ -88,6 +132,9 @@ struct fdp_ftl {
 	struct write_pointer gc_wp;
 	struct line_mgmt lm;
 	struct write_flow_control wfc;
+
+	struct fdp_reclaim_group rg[RG_PER_FTL];
+	struct fdp_placement_handle_list *phndls;
 };
 
 void fdp_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *mapped_addr,

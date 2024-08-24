@@ -63,9 +63,7 @@ enum {
 #elif (BASE_SSD == SAMSUNG_970PRO)
 #define NR_ENDURANCEGROUPS 1
 #define NR_NAMESPACES 1
-#ifdef FDP_SIMULATOR
-#define MAX_NAMESPACES 4
-#endif //FDP_SIMULATOR
+
 
 
 #define NS_SSD_TYPE_0 SSD_TYPE_CONV
@@ -84,6 +82,17 @@ enum {
 #define BLKS_PER_PLN (8192)
 #define BLK_SIZE (0) /*BLKS_PER_PLN should not be 0 */
 static_assert((ONESHOT_PAGE_SIZE % FLASH_PAGE_SIZE) == 0);
+
+#ifdef FDP_SIMULATOR
+
+#define MAX_NAMESPACES (4)
+#define RECLAIM_GROUPS (16)
+#define RG_PER_FTL (RECLAIM_GROUPS / SSD_PARTITIONS)
+#define RU_PER_RG (64)
+#define RECLAIM_UNITS (RECLAIM_GROUPS * RU_PER_RG)
+#define RU_CHANNELS (2)
+
+#endif //FDP_SIMULATOR
 
 #define MAX_CH_XFER_SIZE KB(16) /* to overlap with pcie transfer */
 #define WRITE_UNIT_SIZE (512)
