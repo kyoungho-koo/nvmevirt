@@ -168,6 +168,7 @@ struct ssdparams {
 	int nphndls;
 	int blks_per_ru;
 	int ru_nchs; /* # of channels in the Reclaim Unit */
+	int tt_ru;
 #endif // FDP_SIMULATOR
 
 	/* Unit size of NVMe write command
@@ -265,7 +266,8 @@ static inline uint32_t get_cell(struct ssd *ssd, struct ppa *ppa)
 
 
 #ifdef FDP_SIMULATOR
-void ssd_init_fdp_params(struct ssdparams *spp, uint64_t capacity, uint32_t nparts, uint32_t nphndls);
+void ssd_init_fdp_params(struct ssdparams *spp, uint64_t capacity, uint32_t nparts,
+		struct nvmev_ns_host_sw_specified *host_spec);
 #endif //FDP_SIMULATOR
 
 void ssd_init_params(struct ssdparams *spp, uint64_t capacity, uint32_t nparts);

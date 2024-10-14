@@ -318,6 +318,14 @@ struct nvmev_endg {
 	struct nvmev_reclaim_group rg[16];
 	struct nvmev_placement_handle_list *phndls;
 };
+
+struct nvmev_ns_host_sw_specified {
+	uint64_t		nsze;
+	uint64_t		ncap;
+	uint8_t			flbas;
+	uint16_t		nvmsetid;
+	uint16_t		nphndls;
+};
 #endif //FDP_SIMULATOR
 
 struct nvmev_ns {

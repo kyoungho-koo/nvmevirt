@@ -64,13 +64,15 @@ static void check_params(struct ssdparams *spp)
 }
 
 #ifdef FDP_SIMULATOR 
-void ssd_init_fdp_params(struct ssdparams *spp, uint64_t capacity, uint32_t nparts, uint32_t nphndls)
+void ssd_init_fdp_params(struct ssdparams *spp, uint64_t capacity, uint32_t nparts, 
+struct nvmev_ns_host_sw_specified *host_spec)
 {
 	uint64_t blk_size, total_size;
+	uint64_t lba_size =  1 << (host_spec->flbas + 9);
 
-	spp->secsz = LBA_SIZE;
-	spp->secs_per_pg = 4096 / LBA_SIZE; // pg == 4KB
-	spp->pgsz = spp->secsz * spp->secs_per_pg;
+	spp->secsz = lba_size; // sector = 512B
+	spp->secs_per_pg = 4096 / lba_size; // pg == 4KB
+	spp->pgsz = spp->secsz * spp->secs_per_pg; // pg == 4KB
 
 	spp->nchs = NAND_CHANNELS;
 	spp->pls_per_lun = PLNS_PER_LUN;
@@ -79,7 +81,7 @@ void ssd_init_fdp_params(struct ssdparams *spp, uint64_t capacity, uint32_t npar
 
 	/* for FDP */
 	spp->fdp_enabled = 1;
-	spp->nphndls = nphndls;
+	spp->nphndls = host_spec->nphndls;
 	spp->ru_nchs = RU_CHANNELS;
 
 	/* partitioning SSD by dividing channel*/
@@ -102,7 +104,7 @@ void ssd_init_fdp_params(struct ssdparams *spp, uint64_t capacity, uint32_t npar
 	NVMEV_ASSERT((ONESHOT_PAGE_SIZE % spp->pgsz) == 0 && (FLASH_PAGE_SIZE % spp->pgsz) == 0);
 	NVMEV_ASSERT((ONESHOT_PAGE_SIZE % FLASH_PAGE_SIZE) == 0);
 
-	spp->pgs_per_oneshotpg = ONESHOT_PAGE_SIZE / (spp->pgsz);
+	spp->pgs_per_oneshotpg = ONESHOT_PAGE_SIZE / (spp->pgsz); // flash page 32KB
 	spp->oneshotpgs_per_blk = DIV_ROUND_UP(blk_size, ONESHOT_PAGE_SIZE);
 
 	spp->pgs_per_flashpg = FLASH_PAGE_SIZE / (spp->pgsz);

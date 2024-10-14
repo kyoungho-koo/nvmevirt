@@ -659,6 +659,8 @@ static void __nvmev_admin_ns_create(int eid)
 	const unsigned int disp_no = nvmev_vdev->config.cpu_nr_dispatcher;
 	unsigned long long size;
 
+	struct nvmev_ns_host_sw_specified host_spec;
+
 	NVMEV_INFO("%s nvme_ns_mgmt_host_sw_specified \n", __func__);
 	NVMEV_INFO("%s nsze %lld ncap %lld flbas %d nmic %d anagrpid %d nvmsetid %d endgid %d lbstm %lld nphndls %d\n",
 				__func__, 
@@ -672,6 +674,11 @@ static void __nvmev_admin_ns_create(int eid)
 				data->lbstm,
 				data->nphndls);
 
+	host_spec.nsze = data->nsze;
+	host_spec.ncap = data->ncap;
+	host_spec.flbas = data->flbas;
+	host_spec.nvmsetid = data->nvmsetid;
+	host_spec.nphndls = data->nphndls;
 
 	//size = nvmev_vdev->config.storage_size; 
 	size = data->nsze << (data->flbas + 9);
@@ -682,7 +689,7 @@ static void __nvmev_admin_ns_create(int eid)
 			nvmev_vdev->free_mapped,
 			nsid);
 
-	fdp_init_namespace(ns, nsid, size, ns_addr, disp_no, data->nphndls);
+	fdp_init_namespace(ns, nsid, size, ns_addr, disp_no, &host_spec);
 	nvmev_vdev->free_mapped += size;
 
 	ns->eg = &nvmev_vdev->eg[endgid];
