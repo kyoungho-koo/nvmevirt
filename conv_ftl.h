@@ -79,6 +79,22 @@ struct conv_ftl {
 };
 
 #ifdef FDP_SIMULATOR
+
+struct reclaim_group_mgmt {
+	int id;
+	struct reclaim_unit *ru_entries;
+
+	/* free line list, we only need to maintain a list of blk numbers */
+	struct list_head free_ru_list;
+	pqueue_t *victim_ru_pq;
+	struct list_head full_ru_list;
+
+	uint32_t tt_ru;
+	uint32_t free_ru_cnt;
+	uint32_t victim_ru_cnt;
+	uint32_t full_ru_cnt;
+};
+
 struct ru_params {
 	int start_ch; /* start channel */
 	int nchs_per_ru; /* # of channels in the Reclaim Unit */
@@ -87,40 +103,42 @@ struct ru_params {
 
 };
 
-struct fdp_reclaim_unit {
+struct reclaim_unit {
 	struct ru_params rp;
 
 	int id;
-	uint32_t ref_cnt;
-	uint32_t ruamw;
+	int ipc; /* invalid page count in this ru */
+	int vpc; /* valid page count in this ru */
+
+	size_t pos;
+	
+	uint32_t ref_id;
 	uint32_t blks;
-	struct fdp_reclaim_group *rg;
-	struct fdp_reclaim_unit_handle *ruh;
+	uint32_t ruamw;
 	struct write_pointer wp;
-	struct write_pointer gc_wp;
+	struct list_head entry;
+	/* position in the priority queue for victim lines */
 };
 
-struct fdp_reclaim_group {
-	uint16_t id;
-	int used_ru;
-	struct fdp_reclaim_unit ru[RU_PER_RG];
-};
-
-struct fdp_reclaim_unit_handle {
+struct reclaim_unit_handle {
 	int id;
 	int ru_idx;
-	struct fdp_reclaim_unit *ru[RG_PER_FTL];
+	int gc_ru_idx;
+	struct reclaim_unit *ru[RG_PER_FTL];
+	struct reclaim_unit *gc_ru[RG_PER_FTL];
 };
 
-struct fdp_placement_handle {
+
+struct placement_handle {
 	int id;
-	struct fdp_reclaim_unit_handle *ruh;
+	struct reclaim_unit_handle *ruh;
 };
 
-struct fdp_placement_handle_list {
+struct placement_handle_list {
 	uint16_t nphndls;
-	struct fdp_placement_handle phnd[];
+	struct placement_handle phnd[];
 };
+
 
 struct fdp_ftl {
 	struct ssd *ssd;
@@ -130,15 +148,18 @@ struct fdp_ftl {
 	uint64_t *rmap; /* reverse mapptbl, assume it's stored in OOB */
 	struct write_pointer wp;
 	struct write_pointer gc_wp;
+
 	struct line_mgmt lm;
 	struct write_flow_control wfc;
+	int		id;
 
-	struct fdp_reclaim_group rg[RG_PER_FTL];
-	struct fdp_placement_handle_list *phndls;
+	struct reclaim_group_mgmt rgm[RG_PER_FTL];
+	struct placement_handle_list *phndls;
 };
 
+
 void fdp_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *mapped_addr,
-			 uint32_t cpu_nr_dispatcher, uint32_t nphndls);
+ uint32_t cpu_nr_dispatcher, struct nvmev_ns_host_sw_specified *host_spec);
 #endif //FDP_SIMULATOR
 void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *mapped_addr,
 			 uint32_t cpu_nr_dispatcher);
