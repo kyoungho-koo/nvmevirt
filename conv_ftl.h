@@ -109,12 +109,15 @@ struct reclaim_unit {
 	int id;
 	int ipc; /* invalid page count in this ru */
 	int vpc; /* valid page count in this ru */
+	int ulc; /* used line count in this ru */
 
 	size_t pos;
 	
 	uint32_t ref_id;
 	uint32_t blks;
 	uint32_t ruamw;
+
+
 	struct write_pointer wp;
 	struct list_head entry;
 	/* position in the priority queue for victim lines */

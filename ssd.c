@@ -83,6 +83,7 @@ struct nvmev_ns_host_sw_specified *host_spec)
 	spp->fdp_enabled = 1;
 	spp->nphndls = host_spec->nphndls;
 	spp->ru_nchs = RU_CHANNELS;
+	spp->lines_per_ru = 2;
 
 	/* partitioning SSD by dividing channel*/
 	NVMEV_ASSERT((spp->nchs % nparts) == 0);

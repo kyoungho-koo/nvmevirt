@@ -379,8 +379,9 @@ static struct line *get_next_free_line(struct conv_ftl *conv_ftl)
 	//NVMEV_INFO("%s: free_line_cnt %d\n", __func__, lm->free_line_cnt);
 	return curline;
 }
+
 #ifdef FDP_SIMULATOR
-static struct line *ru_next_free_line(struct fdp_ftl *fdp_ftl)
+static struct reclaim_unit *get_ruh_next_free_ru(struct fdp_ftl *fdp_ftl)
 {
 	struct line_mgmt *lm = &fdp_ftl->lm;
 
@@ -518,21 +519,6 @@ out:
 }
 
 #ifdef FDP_SIMULATOR
-static struct line *get_fdp_next_free_line(struct fdp_ftl *fdp_ftl)
-{
-	struct line_mgmt *lm = &fdp_ftl->lm;
-	struct line *curline = list_first_entry_or_null(&lm->free_line_list, struct line, entry);
-
-	if (!curline) {
-		NVMEV_ERROR("[FDP_SIMULATOR] No free line left in VIRT !!!!\n");
-		return NULL;
-	}
-
-	list_del_init(&curline->entry);
-	lm->free_line_cnt--;
-	NVMEV_DEBUG("%s: [FDP_SIMULATOR] free_line_cnt %d\n", __func__, lm->free_line_cnt);
-	return curline;
-}
 
 static struct write_pointer *__get_ru_wp(struct reclaim_unit *ru)
 {
@@ -629,9 +615,11 @@ static void advance_fdp_write_pointer(struct fdp_ftl *fdp_ftl, uint32_t phnd_id,
 {
 	struct ssdparams *spp = &fdp_ftl->ssd->sp;
 	struct line_mgmt *lm = &fdp_ftl->lm;
+
 	struct reclaim_unit_handle *ruh = fdp_ftl->phndls->phnd[phnd_id].ruh;
 
-	struct write_pointer *wpp = __get_ftl_wp(fdp_ftl, phnd_id, io_type);
+	struct reclaim_unit *rup = __get_ftl_ru(fdp_ftl, phnd_id, io_type);
+	struct write_pointer *wpp = &rup->wp;
 
 	/*
 	NVMEV_INFO("current wpp: ch:%d, lun:%d, pl:%d, blk:%d, pg:%d\n",
@@ -688,25 +676,23 @@ static void advance_fdp_write_pointer(struct fdp_ftl *fdp_ftl, uint32_t phnd_id,
 		//NVMEV_INFO("[NoFreeLine] %s() victim_line_cnt++ %d\n", __func__,lm->victim_line_cnt);
 	}
 
-
-	if (!__next_ruh_ru_blks(fdp_ftl, ruh, io_type)) {
-		__get_ruh_ru(ruh, io_type);
-	} else {
-
+	rup->ulc++;
+	if (rup->ulc != spp->lines_per_ru) {
 		/* current line is used up, pick another empty line */
 		check_addr(wpp->blk, spp->blks_per_pl);
 
 		wpp->curline = get_next_free_line((struct conv_ftl *)fdp_ftl);
-
-#ifdef BUG_FIX
-		if(wpp->curline == NULL)  {
-			NVMEV_INFO("wpp: There is no free line left in VIRT\n");
-			return;
-		}
-#endif //BUG_FIX
-		NVMEV_DEBUG_VERBOSE("wpp: got new clean line %d\n", wpp->curline->id);
 		wpp->blk = wpp->curline->id;
 		check_addr(wpp->blk, spp->blks_per_pl);
+		goto out;
+	}
+
+
+	wpp->curline = NULL;
+	wpp->blk = 0;
+
+	if (!__next_ruh_ru_blks(fdp_ftl, ruh, io_type)) {
+		__get_ruh_ru(ruh, io_type);
 	}
 
 	/* make sure we are starting from page 0 in the super block */
