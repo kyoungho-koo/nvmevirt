@@ -123,6 +123,12 @@ struct reclaim_unit {
 	/* position in the priority queue for victim lines */
 };
 
+
+/* Reclaim Unit Handle structure 
+ *
+ * ru_idx: indicate currently using reclaim unit for page allocation
+ * gc_ru_idx: indicate currently using reclaim unit for garbage collection
+ * */
 struct reclaim_unit_handle {
 	int id;
 	int ru_idx;
