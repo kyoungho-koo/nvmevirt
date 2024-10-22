@@ -94,26 +94,73 @@ static inline void victim_line_set_pos(void *a, size_t pos)
 }
 
 #ifdef FDP_SIMULATOR
+/**
+ * victim_ru_cmp_pri - Compare the priority of two reclaim units.
+ * @next: The priority of the next reclaim unit.
+ * @curr: The priority of the current reclaim unit.
+ *
+ * This function compares the priorities of two reclaim units, returning 
+ * a positive value if the next reclaim unit has a higher priority than 
+ * the current one.
+ *
+ * Return: 1 if next's priority is higher than curr's, 0 otherwise.
+ */
 static inline int victim_ru_cmp_pri(pqueue_pri_t next, pqueue_pri_t curr)
 {
 	return (next > curr);
 }
 
+
+/**
+ * victim_ru_get_pri - Get the priority of a reclaim unit.
+ * @a: Pointer to the reclaim unit.
+ *
+ * This function retrieves the priority of a given reclaim unit.
+ * The priority is stored as a member of the reclaim_unit structure.
+ * We use valid page count (vpc) as a priority of reclaim unit.
+ *
+ * Return: The priority of the reclaim unit.
+ */
 static inline pqueue_pri_t victim_ru_get_pri(void *a)
 {
 	return ((struct reclaim_unit *)a)->vpc;
 }
 
+/**
+ * victim_ru_set_pri - Set the valid page count (vpc) of a reclaim unit.
+ * @a: Pointer to the reclaim unit.
+ * @pri: The valid page count to be assigned.
+ *
+ * This function sets the valid page count (vpc) of a given reclaim unit to the 
+ * provided value. The valid page count is stored as a member of the reclaim_unit structure.
+ */
 static inline void victim_ru_set_pri(void *a, pqueue_pri_t pri)
 {
 	((struct reclaim_unit *)a)->vpc = pri;
 }
-
+/**
+ * victim_ru_get_pos - Get the position of a reclaim unit in the queue.
+ * @a: Pointer to the reclaim unit.
+ *
+ * This function retrieves the position (pos) of the reclaim unit in 
+ * the priority queue. The position is stored as a member of the reclaim_unit structure.
+ *
+ * Return: The position of the reclaim unit in the queue.
+ */
 static inline size_t victim_ru_get_pos(void *a)
 {
 	return ((struct reclaim_unit *)a)->pos;
 }
 
+/**
+ * victim_ru_set_pos - Set the position of a reclaim unit in the queue.
+ * @a: Pointer to the reclaim unit.
+ * @pos: The position to be assigned.
+ *
+ * This function sets the position (pos) of the reclaim unit in the 
+ * priority queue to the provided value. The position is stored as a 
+ * member of the reclaim_unit structure.
+ */
 static inline void victim_ru_set_pos(void *a, size_t pos)
 {
 	((struct reclaim_unit *)a)->pos = pos;
@@ -140,6 +187,19 @@ static inline void check_and_refill_write_credit(struct conv_ftl *conv_ftl)
 #ifdef FDP_SIMULATOR
 static void fdp_foreground_gc(struct fdp_ftl *fdp_ftl);
 
+/**
+ * fdp_check_and_refill_write_credit - Check and refill write credits for flow control.
+ * @fdp_ftl: Pointer to the Flash Translation Layer (FTL) structure.
+ *
+ * This function checks if the current write credits in the write flow control (wfc) are
+ * depleted. If the write credits are zero or negative, it triggers foreground garbage collection
+ * (GC) by calling `fdp_foreground_gc()`. After garbage collection, the function refills the
+ * write credits by adding the number of credits specified by `credits_to_refill` to the current
+ * write credits.
+ *
+ * This mechanism helps manage write operations by ensuring that sufficient write credits
+ * are available, triggering garbage collection to reclaim space when necessary.
+ */
 static inline void fdp_check_and_refill_write_credit(struct fdp_ftl *fdp_ftl)
 {
 	struct write_flow_control *wfc = &(fdp_ftl->wfc);
@@ -196,6 +256,18 @@ static void remove_fdp_lines(struct fdp_ftl *fdp_ftl)
 
 static struct line *get_next_free_line(struct conv_ftl *conv_ftl);
 
+/**
+ * prepare_ru_write_pointer - Initialize the write pointer for a reclaim unit.
+ * @fdp_ftl: Pointer to the Flash Translation Layer (FTL) structure.
+ * @ru: Pointer to the reclaim unit.
+ *
+ * This function prepares the write pointer for the specified reclaim unit (ru).
+ * It fetches the next available line using the `get_next_free_line()` function
+ * and assigns that line to the reclaim unit's write pointer (wp).
+ * 
+ * The write pointer is initialized with default values for channel (ch), 
+ * logical unit number (lun), page (pg), plane (pl), and block (blk).
+ */
 static void prepare_ru_write_pointer(struct fdp_ftl *fdp_ftl, struct reclaim_unit *ru) {
 	struct line *curline = get_next_free_line((struct conv_ftl *) fdp_ftl);
 	struct write_pointer *wp = &ru->wp;
@@ -214,6 +286,17 @@ static void prepare_ru_write_pointer(struct fdp_ftl *fdp_ftl, struct reclaim_uni
 
 }
 
+/**
+ * init_reclaim_group - Initialize a group of reclaim units within the FTL.
+ * @fdp_ftl: Pointer to the Flash Translation Layer (FTL) structure.
+ *
+ * This function initializes the reclaim groups within the FTL.
+ * For each reclaim group, it allocates memory for reclaim units, sets up the
+ * free and full reclaim unit lists, initializes priority queue for victim reclaim units,
+ * and prepares each reclaim unit with default values, including setting up write pointers.
+ *
+ * Reclaim units are grouped in structures that manage their states (free, full, victim).
+ */
 static void init_reclaim_group(struct fdp_ftl *fdp_ftl)
 {
 	struct ssdparams *spp = &fdp_ftl->ssd->sp;
@@ -267,6 +350,14 @@ static void init_reclaim_group(struct fdp_ftl *fdp_ftl)
 	}
 }
 
+/**
+ * remove_reclaim_group - Clean up and remove reclaim groups from the FTL.
+ * @fdp_ftl: Pointer to the Flash Translation Layer (FTL) structure.
+ *
+ * This function deallocates memory used by the reclaim groups in the FTL.
+ * It frees the priority queue for victim reclaim units and the memory allocated
+ * for reclaim unit entries.
+ */
 static void remove_reclaim_group(struct fdp_ftl *fdp_ftl)
 {
 	int i;
@@ -604,19 +695,6 @@ static struct write_pointer *__get_ftl_wp(struct fdp_ftl *fdp_ftl, uint16_t phnd
 }
 
 
-static bool __next_ruh_ru_blks(struct fdp_ftl *fdp_ftl, struct reclaim_unit_handle *ruh, uint32_t io_type) 
-{
-	NVMEV_ASSERT(ruh != NULL);
-	struct reclaim_unit *ru = __get_ruh_ru(ruh, io_type);
-	ru->blks ++;
-
-	if (ru->blks >= ru->rp.blks_per_ru) {
-		NVMEV_INFO("%s: ruh->id %d global ru_idx %d ruh->ru_idx %d ru->id %d blks %d", 
-				__func__, ruh->id, SSD_PARTITIONS * fdp_ftl->id + ruh->ru_idx, ruh->ru_idx, ru->id, ru->blks);
-	}
-
-	return (ru->blks < ru->rp.blks_per_ru);
-}
 
 static void rotate_ruh_next_ru_pointer(struct reclaim_unit_handle *ruh, uint32_t io_type) 
 {
@@ -667,7 +745,7 @@ static void advance_fdp_ru_pointer(struct fdp_ftl *fdp_ftl, uint32_t phnd_id, ui
 	struct reclaim_unit *rup = __get_ruh_ru(ruh, io_type);
 	struct write_pointer *wpp = &rup->wp;
 
-	(*rupp)->ulc++;
+	rup->ulc++;
 	if (rup->ulc != spp->lines_per_ru) {
 		/* current line is used up, pick another empty line */
 		check_addr(wpp->blk, spp->blks_per_pl);
@@ -685,11 +763,9 @@ static void advance_fdp_ru_pointer(struct fdp_ftl *fdp_ftl, uint32_t phnd_id, ui
 	int *ru_idx = __get_ruh_ru_idx(ruh, io_type);
 	struct reclaim_unit **rupp = __get_ruh_rupp(ruh, io_type);
 	*rupp = get_next_free_ru(fdp_ftl, *ru_idx);
-	
-
 out:
 
-	NVMEV_DEBUG_VERBOSE("advanced wpp: ch:%d, lun:%d, pl:%d, blk:%d, pg:%d (curline %d)\n",
+	NVMEV_DEBUG_VERBOSE("advanced rupp: ch:%d, lun:%d, pl:%d, blk:%d, pg:%d (curline %d)\n",
 			wpp->ch, wpp->lun, wpp->pl, wpp->blk, wpp->pg, wpp->curline->id);
 
 }
@@ -1416,6 +1492,33 @@ static uint64_t fdp_gc_write_page(struct fdp_ftl *fdp_ftl, uint32_t phnd_id, str
 	}
 	return 0;
 }
+
+static struct reclaim_unit *select_victim_ru(struct fdp_ftl *fdp_ftl, int gc_rg_idx, bool force)
+{
+	struct ssdparams *spp = &fdp_ftl->ssd->sp;
+
+	struct line_mgmt *lm = &fdp_ftl->lm;
+	struct line *victim_line = NULL;
+
+	victim_line = pqueue_peek(lm->victim_line_pq);
+	if (!victim_line) {
+		//NVMEV_INFO("[NoFreeLine] %s() victim_line_pq is NULL \n", __func__);
+		return NULL;
+	}
+
+	if (!force && (victim_line->vpc > (spp->pgs_per_line / 8))) {
+		//NVMEV_INFO("[NoFreeLine] %s() vpc > pgs_per_line \n", __func__);
+		return NULL;
+	}
+
+	pqueue_pop(lm->victim_line_pq);
+	victim_line->pos = 0;
+	lm->victim_line_cnt--;
+	//NVMEV_INFO("[NoFreeLine] %s() victim_line_cnt-- %d\n", __func__,lm->victim_line_cnt);
+
+	/* victim_line is a danggling node now */
+	return victim_line;
+}
 #endif //FDP_SIMULATOR
 
 static struct line *select_victim_line(struct conv_ftl *conv_ftl, bool force)
@@ -1606,10 +1709,15 @@ static void foreground_gc(struct conv_ftl *conv_ftl)
 #ifdef FDP_SIMULATOR
 static int fdp_do_gc(struct fdp_ftl *fdp_ftl, bool force)
 {
+	struct reclaim_unit *victim_ru = NULL;
+
 	struct line *victim_line = NULL;
 	struct ssdparams *spp = &fdp_ftl->ssd->sp;
 	struct ppa ppa;
 	int flashpg;
+
+
+	victim_ru = select_victim_ru (fdp_ftl, force);
 
 	victim_line = select_victim_line((struct conv_ftl *) fdp_ftl, force);
 	if (!victim_line) {

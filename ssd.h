@@ -168,6 +168,7 @@ struct ssdparams {
 	int nphndls;
 	int blks_per_ru;
 	int lines_per_ru;
+	unsigned long pgs_per_ru;
 	int ru_nchs; /* # of channels in the Reclaim Unit */
 	int tt_ru;
 #endif // FDP_SIMULATOR

@@ -144,6 +144,7 @@ struct nvmev_ns_host_sw_specified *host_spec)
 	spp->secs_per_ch = spp->secs_per_lun * spp->luns_per_ch;
 	spp->tt_secs = spp->secs_per_ch * spp->nchs;
 
+
 	spp->pgs_per_pl = spp->pgs_per_blk * spp->blks_per_pl;
 	spp->pgs_per_lun = spp->pgs_per_pl * spp->pls_per_lun;
 	spp->pgs_per_ch = spp->pgs_per_lun * spp->luns_per_ch;
@@ -161,6 +162,10 @@ struct nvmev_ns_host_sw_specified *host_spec)
 	/* line is special, put it at the end */
 	spp->blks_per_line = spp->tt_luns; /* TODO: to fix under multiplanes */
 	spp->pgs_per_line = spp->blks_per_line * spp->pgs_per_blk;
+
+	/* for FDP */
+	spp->pgs_per_ru = spp->pgs_per_line * spp->lines_per_ru;
+
 	spp->secs_per_line = spp->pgs_per_line * spp->secs_per_pg;
 	spp->tt_lines = spp->blks_per_lun;
 	/* TODO: to fix under multiplanes */ // lun size is super-block(line) size
