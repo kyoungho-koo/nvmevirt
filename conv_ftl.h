@@ -113,14 +113,16 @@ struct reclaim_unit {
 
 	size_t pos;
 	
-	uint32_t ref_id;
+	uint32_t rg_id;
+	uint32_t ruh_id;
 	uint32_t blks;
 	uint32_t ruamw;
-
 
 	struct write_pointer wp;
 	struct list_head entry;
 	/* position in the priority queue for victim lines */
+
+	struct list_head ru_line_list;
 };
 
 
