@@ -336,14 +336,15 @@ static void init_reclaim_group(struct fdp_ftl *fdp_ftl)
 			ru->ipc = 0;
 			ru->vpc = 0;
 			ru->pos = 0;
-			ru->ref_id = -1;
+
+			ru->rg_id = i;
 			ru->blks = 0;
 			ru->ruamw = ru->rp.blks_per_ru * 512 * 1024;
 			ru->ulc = 0;
 
 
 			prepare_ru_write_pointer(fdp_ftl, ru);
-			LIST_HEAD_INIT(ru->entry);
+			INIT_LIST_HEAD(&ru->entry);
 
 			/* RU's line list */
 
@@ -655,21 +656,22 @@ static struct reclaim_unit **__get_ruh_rupp(struct reclaim_unit_handle *ruh, uin
 	return NULL;
 }
 
-static struct reclaim_group_mgmt *__get_ftl_rgm(struct fdp_ftl *fdp_ftl, uint16_t phnd_id, uint32_t io_type)
-{
-	struct reclaim_unit_handle *ruh = __get_ftl_ruh(fdp_ftl, phnd_id);
-	int * ru_idx  = __get_ruh_ru_idx(ruh, io_type);
-
-	return fdp_ftl->rgm[*ru_idx];
-
-}
-
 static struct reclaim_unit_handle *__get_ftl_ruh(struct fdp_ftl *fdp_ftl, uint16_t phnd_id)
 {
 	struct reclaim_unit_handle *ruh = __get_ftl_ruh(fdp_ftl, phnd_id);
 	return ruh;
 
 }
+
+static struct reclaim_group_mgmt *__get_ftl_rgm(struct fdp_ftl *fdp_ftl, uint16_t phnd_id, uint32_t io_type)
+{
+	struct reclaim_unit_handle *ruh = __get_ftl_ruh(fdp_ftl, phnd_id);
+	int *ru_idx  = __get_ruh_ru_idx(ruh, io_type);
+
+	return &fdp_ftl->rgm[*ru_idx];
+
+}
+
 
 static struct reclaim_unit *__get_ftl_ru(struct fdp_ftl *fdp_ftl, uint16_t phnd_id , uint32_t io_type)
 {
@@ -847,7 +849,8 @@ out:
 static struct ppa get_fdp_new_page(struct fdp_ftl *fdp_ftl, uint32_t phnd_id, uint32_t io_type)
 {
 	struct ppa ppa;
-	struct write_pointer *wp = __get_ruh_wp(fdp_ftl->phndls->phnd[phnd_id].ruh, io_type);
+	struct write_pointer *wp = __get_ftl_wp(fdp_ftl, phnd_id, io_type);
+
 
 	ppa.ppa = 0;
 	ppa.g.ch = wp->ch;
@@ -1016,12 +1019,11 @@ static void remove_fdp_placement(struct fdp_ftl *fdp_ftl)
 
 	int p_idx;
 	for (p_idx = 0; p_idx < phndls->nphndls; p_idx++) {
-		struct fdp_reclaim_unit_handle *ruh = phndls->phnd[p_idx].ruh;
+		struct reclaim_unit_handle *ruh = phndls->phnd[p_idx].ruh;
 		int rg_idx;
 		for (rg_idx = 0; rg_idx < RG_PER_FTL; rg_idx++) {
 			// Initialize Reclaim Unit Handle
 			ruh->ru[rg_idx]->ref_cnt--;
-			ruh->ru[rg_idx]->ruh = NULL;
 			ruh->ru[rg_idx] = NULL;
 		}
 		kfree (ruh);
@@ -1448,8 +1450,8 @@ static uint64_t gc_write_page(struct conv_ftl *conv_ftl, struct ppa *old_ppa)
 /* move valid page data (already in DRAM) from victim line to a new page */
 static uint64_t fdp_gc_write_page(struct fdp_ftl *fdp_ftl, uint32_t ruh_id, struct ppa *old_ppa)
 {
-	struct ssdparams *spp = &conv_ftl->ssd->sp;
-	struct convparams *cpp = &conv_ftl->cp;
+	struct ssdparams *spp = &fdp_ftl->ssd->sp;
+	struct convparams *cpp = &fdp_ftl->cp;
 	struct ppa new_ppa;
 	uint64_t lpn = get_rmap_ent((struct conv_ftl *) fdp_ftl, old_ppa);
 
@@ -1475,12 +1477,12 @@ static uint64_t fdp_gc_write_page(struct fdp_ftl *fdp_ftl, uint32_t ruh_id, stru
 			.interleave_pci_dma = false,
 			.ppa = &new_ppa,
 		};
-		if (last_pg_in_wordline(conv_ftl, &new_ppa)) {
+		if (last_pg_in_wordline((struct conv_ftl *)fdp_ftl, &new_ppa)) {
 			gcw.cmd = NAND_WRITE;
 			gcw.xfer_size = spp->pgsz * spp->pgs_per_oneshotpg;
 		}
 
-		ssd_advance_nand(conv_ftl->ssd, &gcw);
+		ssd_advance_nand(fdp_ftl->ssd, &gcw);
 	}
 	return 0;
 }
@@ -1802,7 +1804,7 @@ static int fdp_do_gc(struct fdp_ftl *fdp_ftl, bool force)
 					if (flashpg == (spp->flashpgs_per_blk - 1)) {
 						struct convparams *cpp = &fdp_ftl->cp;
 
-						mark_block_free(fdp_ftl, &ppa);
+						mark_block_free((struct conv_ftl *) fdp_ftl, &ppa);
 
 						if (cpp->enable_gc_delay) {
 							struct nand_cmd gce = {
@@ -1812,7 +1814,7 @@ static int fdp_do_gc(struct fdp_ftl *fdp_ftl, bool force)
 								.interleave_pci_dma = false,
 								.ppa = &ppa,
 							};
-							ssd_advance_nand(conv_ftl->ssd, &gce);
+							ssd_advance_nand(fdp_ftl->ssd, &gce);
 						}
 
 						lunp->gc_endtime = lunp->next_lun_avail_time;
@@ -1824,18 +1826,15 @@ static int fdp_do_gc(struct fdp_ftl *fdp_ftl, bool force)
 
 
 
-
-
-
 	/* update line status */
-	mark_line_free(conv_ftl, &ppa);
+	mark_line_free((struct conv_ftl *) fdp_ftl, &ppa);
 
 	return 0;
 }
 
 static void fdp_foreground_gc(struct fdp_ftl *fdp_ftl)
 {
-	if (should_gc_high(conv_ftl)) {
+	if (should_gc_high((struct conv_ftl *) fdp_ftl)) {
 		NVMEV_DEBUG_VERBOSE("should_gc_high passed");
 		/* perform GC here until !should_gc(conv_ftl) */
 		fdp_do_gc(fdp_ftl, true);

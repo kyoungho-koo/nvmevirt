@@ -113,6 +113,8 @@ struct reclaim_unit {
 
 	size_t pos;
 	
+
+	uint32_t ref_cnt;
 	uint32_t rg_id;
 	uint32_t ruh_id;
 	uint32_t blks;
