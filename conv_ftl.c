@@ -326,12 +326,28 @@ static void init_reclaim_group(struct fdp_ftl *fdp_ftl)
 		// Need for fix
 		rgm->free_ru_cnt = 0;
 		for (j = 0; j < rgm->tt_ru; j++) {
+			rgm->ru_entries[j] = (struct reclaim_unit) {
+				.id = i * rgm->tt_ru + j,
+				.ipc = 0,
+				.vpc = 0,
+				.pos = 0,
+				.rg_id = i,
+				.blks = 0,
+				.ulc = 0,
+				.entry = LIST_HEAD_INIT(rgm->ru_entries[j].entry),
+			};
+
+
+
 			struct reclaim_unit *ru = &rgm->ru_entries[j];
+
 			ru->rp.start_ch = 0;
 			ru->rp.nchs_per_ru = spp->ru_nchs;
 			ru->rp.luns_per_ru = spp->luns_per_ch;
 			ru->rp.blks_per_ru = spp->tt_blks / RECLAIM_UNITS;
+			ru->ruamw = ru->rp.blks_per_ru * 512 * 1024;
 
+			/*
 			ru->id = i * rgm->tt_ru + j;
 			ru->ipc = 0;
 			ru->vpc = 0;
@@ -339,12 +355,13 @@ static void init_reclaim_group(struct fdp_ftl *fdp_ftl)
 
 			ru->rg_id = i;
 			ru->blks = 0;
-			ru->ruamw = ru->rp.blks_per_ru * 512 * 1024;
 			ru->ulc = 0;
+			ru->entry = LIST_HEAD_INIT(rgm->ru_entries[j].entry);
+			*/
 
 
 			prepare_ru_write_pointer(fdp_ftl, ru);
-			INIT_LIST_HEAD(&ru->entry);
+
 
 			/* RU's line list */
 

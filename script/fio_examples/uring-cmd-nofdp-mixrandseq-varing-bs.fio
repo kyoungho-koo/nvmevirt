@@ -1,0 +1,41 @@
+# io_uring_cmd I/O engine for nvme-ns generic character device with FDP enabled
+# This assumes the namespace is already configured with FDP support and has at
+# least 8 available reclaim units.
+#
+# Each job targets different ranges of LBAs with different placement
+# identifiers, and has different write intensity.
+
+[global]
+filename=/dev/<NGDEV_NS>
+ioengine=io_uring_cmd
+cmd_type=nvme
+iodepth=32
+fdp=0
+time_based=1
+runtime=<RUNTIME>
+norandommap
+randrepeat=0
+
+
+[seqwr-256k]
+rw=write
+bs=256K
+offset=0%
+size=25%
+
+[seqwr-64k]
+rw=write
+bs=64K
+offset=25%
+size=25%
+
+[randwr-16k]
+rw=randrw
+rwmixwrite=100
+bs=16K
+
+[randwr-4k]
+rw=randrw
+rwmixwrite=100
+bs=4K
+
