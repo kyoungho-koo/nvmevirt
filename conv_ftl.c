@@ -675,9 +675,8 @@ static struct reclaim_unit **__get_ruh_rupp(struct reclaim_unit_handle *ruh, uin
 
 static struct reclaim_unit_handle *__get_ftl_ruh(struct fdp_ftl *fdp_ftl, uint16_t phnd_id)
 {
-	struct reclaim_unit_handle *ruh = __get_ftl_ruh(fdp_ftl, phnd_id);
-	return ruh;
-
+	NVMEV_ASSERT(fdp_ftl->phndls != NULL);
+	return fdp_ftl->phndls->phnd[phnd_id].ruh;
 }
 
 static struct reclaim_group_mgmt *__get_ftl_rgm(struct fdp_ftl *fdp_ftl, uint16_t phnd_id, uint32_t io_type)

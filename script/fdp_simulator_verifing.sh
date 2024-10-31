@@ -69,6 +69,7 @@ sleep 10
 nvme list
 sleep 10
 
+dd if=/dev/zero of=${BLKDEV}n1 bs=1M count=1 status=progress
 sleep 1000
 dd if=/dev/zero of=${BLKDEV}n1 bs=1M count=3000000 status=progress
 echo "NVMe Device FDP Status"
