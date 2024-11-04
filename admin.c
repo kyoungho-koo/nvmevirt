@@ -692,6 +692,7 @@ static void __nvmev_admin_ns_create(int eid)
 	fdp_init_namespace(ns, nsid, size, ns_addr, disp_no, &host_spec);
 	nvmev_vdev->free_mapped += size;
 
+	//TODO: I also implement placement list on ftl data structure
 	ns->eg = &nvmev_vdev->eg[endgid];
 	int phndls_size_bytes = sizeof(struct nvmev_placement_handle_list) +
 		data->nphndls * sizeof(struct nvmev_placement_handle);

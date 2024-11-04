@@ -995,27 +995,28 @@ static void init_fdp_ru(struct fdp_ftl *fdp_ftl)
 	}
 }
 
+*/
 
 static void init_fdp_placement(struct fdp_ftl *fdp_ftl)
 {
 	struct ssdparams *spp = &fdp_ftl->ssd->sp;
-	int phndls_size_bytes = sizeof(struct fdp_placement_handle_list) +
-		spp->nphndls * sizeof(struct fdp_placement_handle);
-	struct fdp_placement_handle_list *phndls = kmalloc(phndls_size_bytes, GFP_KERNEL);
+	int phndls_size_bytes = sizeof(struct placement_handle_list) +
+		spp->nphndls * sizeof(struct placement_handle);
+	struct placement_handle_list *phndls = kmalloc(phndls_size_bytes, GFP_KERNEL);
 
 
-	init_fdp_ru(fdp_ftl);
+	//init_fdp_ru(fdp_ftl);
 	phndls->nphndls = spp->nphndls;
 
 	int p_idx;
 	for (p_idx = 0; p_idx < phndls->nphndls; p_idx++) {
-		struct fdp_reclaim_unit_handle *ruh = kmalloc(sizeof(struct fdp_reclaim_unit_handle), GFP_KERNEL);
+		struct reclaim_unit_handle *ruh = kmalloc(sizeof(struct reclaim_unit_handle), GFP_KERNEL);
 
 		int rg_idx;
 		for (rg_idx = 0; rg_idx < RG_PER_FTL; rg_idx++) {
 			// Initialize Reclaim Unit Handle
-			ruh->ru[rg_idx] = &fdp_ftl->rg[rg_idx].ru[p_idx];
-			ruh->ru[rg_idx]->ruh = ruh;
+			ruh->ru[rg_idx] = get_next_free_ru(fdp_ftl, rg_idx);
+			ruh->ru[rg_idx]->ruh_id = p_idx;
 			ruh->ru[rg_idx]->ref_cnt++;
 		}
 
@@ -1027,7 +1028,6 @@ static void init_fdp_placement(struct fdp_ftl *fdp_ftl)
 	fdp_ftl->phndls = phndls;
 
 }
-*/
 
 static void remove_fdp_placement(struct fdp_ftl *fdp_ftl)
 {
@@ -1070,7 +1070,7 @@ static void fdp_init_ftl(struct fdp_ftl *fdp_ftl, int ftl_id, struct convparams 
 	init_reclaim_group(fdp_ftl);
 
 	/* initialize placement in FTL */
-	// init_fdp_placement(fdp_ftl);
+	init_fdp_placement(fdp_ftl);
 
 	/* initialize write pointer, this is how we allocate new pages for writes */
 	//prepare_fdp_write_pointer(fdp_ftl, USER_IO);
@@ -1272,6 +1272,7 @@ static inline bool valid_ppa(struct conv_ftl *conv_ftl, struct ppa *ppa)
 	int pg = ppa->g.pg;
 	//int sec = ppa->g.sec;
 
+	NVMEV_INFO("%s spp %p \n", __func__, spp);
 	if (ch < 0 || ch >= spp->nchs)
 		return false;
 	if (lun < 0 || lun >= spp->luns_per_ch)
@@ -2119,7 +2120,10 @@ static bool fdp_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
 
 		/* update maptbl */
 		set_maptbl_ent((struct conv_ftl *) fdp_ftl, local_lpn, &ppa);
-		NVMEV_INFO("%s: got new ppa %lld, ", __func__, ppa2pgidx((struct conv_ftl *) fdp_ftl, &ppa));
+
+		if (ns->id == 0) {
+			NVMEV_INFO("%s: got new ppa %lld, ", __func__, ppa2pgidx((struct conv_ftl *) fdp_ftl, &ppa));
+		}
 		/* update rmap */
 		set_rmap_ent((struct conv_ftl *) fdp_ftl, local_lpn, &ppa);
 
