@@ -1145,22 +1145,25 @@ static void conv_init_params(struct convparams *cpp)
 void fdp_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *mapped_addr,
 uint32_t cpu_nr_dispatcher, struct nvmev_ns_host_sw_specified *host_spec)
 {
-	struct ssdparams spp;
-	struct convparams cpp;
+	struct ssdparams *spp;
+	struct convparams *cpp;
 	struct fdp_ftl *fdp_ftls;
 	struct ssd *ssd;
 	uint32_t i;
 	const uint32_t nr_parts = SSD_PARTITIONS;
 
-	ssd_init_fdp_params(&spp, size, nr_parts, host_spec);
-	conv_init_params(&cpp);
+	spp = kmalloc(sizeof(struct ssdparams), GFP_KERNEL);
+	cpp = kmalloc(sizeof(struct convparams), GFP_KERNEL);
+
+	ssd_init_fdp_params(spp, size, nr_parts, host_spec);
+	conv_init_params(cpp);
 
 	fdp_ftls = kmalloc(sizeof(struct fdp_ftl) * nr_parts, GFP_KERNEL);
 
 	for (i = 0; i < nr_parts; i++) {
 		ssd = kmalloc(sizeof(struct ssd), GFP_KERNEL);
-		ssd_init(ssd, &spp, cpu_nr_dispatcher);
-		fdp_init_ftl(&fdp_ftls[i], i, &cpp, ssd);
+		ssd_init(ssd, spp, cpu_nr_dispatcher);
+		fdp_init_ftl(&fdp_ftls[i], i, cpp, ssd);
 	}
 
 	/* PCIe, Write buffer are shared by all instances*/
@@ -1177,13 +1180,13 @@ uint32_t cpu_nr_dispatcher, struct nvmev_ns_host_sw_specified *host_spec)
 	ns->csi = NVME_CSI_NVM;
 	ns->nr_parts = nr_parts;
 	ns->ftls = (void *)fdp_ftls;
-	ns->size = (uint64_t)((size * 100) / cpp.pba_pcent);
+	ns->size = (uint64_t)((size * 100) / cpp->pba_pcent);
 	ns->mapped = mapped_addr;
 	/*register io command handler*/
 	ns->proc_io_cmd = conv_proc_nvme_io_cmd;
 
 	NVMEV_INFO("FTL physical space: %lld, logical space: %lld (physical/logical * 100 = %d)\n",
-		   size, ns->size, cpp.pba_pcent);
+		   size, ns->size, cpp->pba_pcent);
 
 	return;
 }
@@ -1272,7 +1275,8 @@ static inline bool valid_ppa(struct conv_ftl *conv_ftl, struct ppa *ppa)
 	int pg = ppa->g.pg;
 	//int sec = ppa->g.sec;
 
-	NVMEV_INFO("%s spp %p \n", __func__, spp);
+	NVMEV_INFO("%s conv_ftl 0x%p spp 0x%p \n", 
+			__func__, conv_ftl, spp);
 	if (ch < 0 || ch >= spp->nchs)
 		return false;
 	if (lun < 0 || lun >= spp->luns_per_ch)
@@ -1962,6 +1966,97 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
 }
 
 #ifdef FDP_SIMULATOR
+static bool fdp_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
+{
+	struct fdp_ftl *fdp_ftls = (struct fdp_ftl *)ns->ftls;
+	struct fdp_ftl *fdp_ftl = &fdp_ftls[0];
+	/* spp are shared by all instances*/
+	struct ssdparams *spp = &fdp_ftl->ssd->sp;
+
+	struct nvme_command *cmd = req->cmd;
+	uint64_t lba = cmd->rw.slba;
+	uint64_t nr_lba = (cmd->rw.length + 1);
+	uint64_t start_lpn = lba / spp->secs_per_pg;
+	uint64_t end_lpn = (lba + nr_lba - 1) / spp->secs_per_pg;
+	uint64_t lpn;
+	uint64_t nsecs_start = req->nsecs_start;
+	uint64_t nsecs_completed, nsecs_latest = nsecs_start;
+	uint32_t xfer_size, i;
+	uint32_t nr_parts = ns->nr_parts;
+
+	struct ppa prev_ppa;
+	struct nand_cmd srd = {
+		.type = USER_IO,
+		.cmd = NAND_READ,
+		.stime = nsecs_start,
+		.interleave_pci_dma = true,
+	};
+
+	NVMEV_ASSERT(fdp_ftls);
+	NVMEV_DEBUG_VERBOSE("%s: start_lpn=%lld, len=%lld, end_lpn=%lld", __func__, start_lpn, nr_lba, end_lpn);
+	if ((end_lpn / nr_parts) >= spp->tt_pgs) {
+		NVMEV_ERROR("%s: lpn passed FTL range (start_lpn=%lld > tt_pgs=%ld)\n", __func__,
+			    start_lpn, spp->tt_pgs);
+		return false;
+	}
+
+	if (LBA_TO_BYTE(nr_lba) <= (KB(4) * nr_parts)) {
+		srd.stime += spp->fw_4kb_rd_lat;
+	} else {
+		srd.stime += spp->fw_rd_lat;
+	}
+
+	for (i = 0; (i < nr_parts) && (start_lpn <= end_lpn); i++, start_lpn++) {
+		fdp_ftl = &fdp_ftls[start_lpn % nr_parts];
+		xfer_size = 0;
+		prev_ppa = get_maptbl_ent((struct conv_ftl *) fdp_ftl, start_lpn / nr_parts);
+
+		/* normal IO read path */
+		for (lpn = start_lpn; lpn <= end_lpn; lpn += nr_parts) {
+			uint64_t local_lpn;
+			struct ppa cur_ppa;
+
+			local_lpn = lpn / nr_parts;
+			cur_ppa = get_maptbl_ent((struct conv_ftl *) fdp_ftl, local_lpn);
+			if (!mapped_ppa(&cur_ppa) || !valid_ppa((struct conv_ftl *) fdp_ftl, &cur_ppa)) {
+				NVMEV_DEBUG_VERBOSE("lpn 0x%llx not mapped to valid ppa\n", local_lpn);
+				NVMEV_DEBUG_VERBOSE("Invalid ppa,ch:%d,lun:%d,blk:%d,pl:%d,pg:%d\n",
+					    cur_ppa.g.ch, cur_ppa.g.lun, cur_ppa.g.blk,
+					    cur_ppa.g.pl, cur_ppa.g.pg);
+				continue;
+			}
+
+			// aggregate read io in same flash page
+			if (mapped_ppa(&prev_ppa) &&
+			    is_same_flash_page((struct conv_ftl *) fdp_ftl, cur_ppa, prev_ppa)) {
+				xfer_size += spp->pgsz;
+				continue;
+			}
+
+			if (xfer_size > 0) {
+				srd.xfer_size = xfer_size;
+				srd.ppa = &prev_ppa;
+				nsecs_completed = ssd_advance_nand(fdp_ftl->ssd, &srd);
+				nsecs_latest = max(nsecs_completed, nsecs_latest);
+			}
+
+			xfer_size = spp->pgsz;
+			prev_ppa = cur_ppa;
+		}
+
+		// issue remaining io
+		if (xfer_size > 0) {
+			srd.xfer_size = xfer_size;
+			srd.ppa = &prev_ppa;
+			nsecs_completed = ssd_advance_nand(fdp_ftl->ssd, &srd);
+			nsecs_latest = max(nsecs_completed, nsecs_latest);
+		}
+	}
+
+	ret->nsecs_target = nsecs_latest;
+	ret->status = NVME_SC_SUCCESS;
+	return true;
+}
 static bool is_ru_available(struct nvmev_reclaim_unit *ru) {
 	if (ru->ref_cnt != 0) {
 		return false;
@@ -2422,18 +2517,28 @@ bool conv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req, struc
 		//NVMEV_INFO("%s: %s (0x%x) fdp enable: %d\n", __func__,
 	//		nvme_opcode_string(cmd->common.opcode), cmd->common.opcode, eg->fdp_enable);
 //#endif //FDP_SIMULATOR
-		
 #ifdef FDP_SIMULATOR
 		NVMEV_ASSERT(ns->eg != NULL);
 		if (ns->eg->fdp_enable)
 			return fdp_write(ns, req, ret);
 		else
 			return conv_write(ns, req, ret);
+#else
+		if (!conv_write(ns, req, ret))
+			return false;
 #endif //FDP_SIMULATOR
 		break;
 	case nvme_cmd_read:
+#ifdef FDP_SIMULATOR
+		NVMEV_ASSERT(ns->eg != NULL);
+		if (ns->eg->fdp_enable)
+			return fdp_read(ns, req, ret);
+		else
+			return conv_read(ns, req, ret);
+#else
 		if (!conv_read(ns, req, ret))
 			return false;
+#endif //FDP_SIMULATOR
 		break;
 	case nvme_cmd_flush:
 		conv_flush(ns, req, ret);
