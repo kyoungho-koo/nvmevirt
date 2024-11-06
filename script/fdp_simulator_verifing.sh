@@ -12,7 +12,8 @@ NGDEV=/dev/ng0
 
 
 next_test() {
-	echo Proceed to the next experiment? Press 'y' to continue or any other key to exit.
+	echo
+	echo Proceed to the next experiment?
 	read -p "Enter choice: " choice
 	if [ "$choice" != "y"]; then
 		echo Experiment terminated by user,
