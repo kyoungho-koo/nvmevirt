@@ -10,8 +10,8 @@
 
 #ifdef FDP_SIMULATOR
 struct fdpparams {
-	uint32_t gc_thres_lines;
-	uint32_t gc_thres_lines_high;
+	uint32_t gc_thres_ru;
+	uint32_t gc_thres_ru_high;
 	bool enable_gc_delay;
 
 	double op_area_pcent;
@@ -157,7 +157,7 @@ struct placement_handle_list {
 struct fdp_ftl {
 	struct ssd *ssd;
 
-	struct convparams cp;
+	struct fdpparams fp;
 	struct ppa *maptbl; /* page level mapping table */
 	uint64_t *rmap; /* reverse mapptbl, assume it's stored in OOB */
 	struct write_pointer wp;

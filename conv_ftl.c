@@ -25,6 +25,33 @@ static inline bool should_gc_high(struct conv_ftl *conv_ftl)
 	return conv_ftl->lm.free_line_cnt <= conv_ftl->cp.gc_thres_lines_high;
 }
 
+#ifdef FDP_SIMULATOR
+static bool fdp_should_gc(struct fdp_ftl *fdp_ftl)
+{
+	int free_ru_cnt = 0;
+
+	int i;
+	for (i = 0; i < RG_PER_FTL; i++) {
+		free_ru_cnt += fdp_ftl->rgm[i].free_ru_cnt;
+	}
+
+	return free_ru_cnt <= fdp_ftl->fp.gc_thres_ru;
+}
+
+static bool fdp_should_gc_high(struct fdp_ftl *fdp_ftl)
+{
+	int free_ru_cnt = 0;
+
+	int i;
+	for (i = 0; i < RG_PER_FTL; i++) {
+		free_ru_cnt += fdp_ftl->rgm[i].free_ru_cnt;
+	}
+
+	return free_ru_cnt <= fdp_ftl->fp.gc_thres_ru_high;
+}
+
+#endif //FDP_SIMULATOR
+
 static inline struct ppa get_maptbl_ent(struct conv_ftl *conv_ftl, uint64_t lpn)
 {
 	NVMEV_ASSERT(conv_ftl != NULL);
@@ -1042,13 +1069,13 @@ static void remove_fdp_placement(struct fdp_ftl *fdp_ftl)
 	kfree(phndls);
 }
 
-static void fdp_init_ftl(struct fdp_ftl *fdp_ftl, int ftl_id, struct convparams *cpp, struct ssd *ssd)
+static void fdp_init_ftl(struct fdp_ftl *fdp_ftl, int ftl_id, struct fdpparams *fpp, struct ssd *ssd)
 {
 
 	fdp_ftl->id = ftl_id;
 
 	/*copy convparams*/
-	fdp_ftl->cp = *cpp;
+	fdp_ftl->fp = *fpp;
 
 	fdp_ftl->ssd = ssd;
 
@@ -1137,28 +1164,37 @@ static void conv_init_params(struct convparams *cpp)
 
 #ifdef FDP_SIMULATOR
 
+static void fdp_init_params(struct fdpparams *fpp)
+{
+	fpp->op_area_pcent = OP_AREA_PERCENT;
+	fpp->gc_thres_ru = 2 * RG_PER_FTL; /* Need only two lines.(host write, gc)*/
+	fpp->gc_thres_ru_high = 2 * RG_PER_FTL; /* Need only two lines.(host write, gc)*/
+	fpp->enable_gc_delay = 1;
+	fpp->pba_pcent = (int)((1 + fpp->op_area_pcent) * 100);
+}
+
 void fdp_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *mapped_addr,
 uint32_t cpu_nr_dispatcher, struct nvmev_ns_host_sw_specified *host_spec)
 {
 	struct ssdparams *spp;
-	struct convparams *cpp;
+	struct fdpparams *fpp;
 	struct fdp_ftl *fdp_ftls;
 	struct ssd *ssd;
 	uint32_t i;
 	const uint32_t nr_parts = SSD_PARTITIONS;
 
 	spp = kmalloc(sizeof(struct ssdparams), GFP_KERNEL);
-	cpp = kmalloc(sizeof(struct convparams), GFP_KERNEL);
+	fpp = kmalloc(sizeof(struct fdpparams), GFP_KERNEL);
 
 	ssd_init_fdp_params(spp, size, nr_parts, host_spec);
-	conv_init_params(cpp);
+	fdp_init_params(fpp);
 
 	fdp_ftls = kmalloc(sizeof(struct fdp_ftl) * nr_parts, GFP_KERNEL);
 
 	for (i = 0; i < nr_parts; i++) {
 		ssd = kmalloc(sizeof(struct ssd), GFP_KERNEL);
 		ssd_init(ssd, spp, cpu_nr_dispatcher);
-		fdp_init_ftl(&fdp_ftls[i], i, cpp, ssd);
+		fdp_init_ftl(&fdp_ftls[i], i, fpp, ssd);
 	}
 
 	/* PCIe, Write buffer are shared by all instances*/
@@ -1175,13 +1211,13 @@ uint32_t cpu_nr_dispatcher, struct nvmev_ns_host_sw_specified *host_spec)
 	ns->csi = NVME_CSI_NVM;
 	ns->nr_parts = nr_parts;
 	ns->ftls = (void *)fdp_ftls;
-	ns->size = (uint64_t)((size * 100) / cpp->pba_pcent);
+	ns->size = (uint64_t)((size * 100) / fpp->pba_pcent);
 	ns->mapped = mapped_addr;
 	/*register io command handler*/
 	ns->proc_io_cmd = conv_proc_nvme_io_cmd;
 
 	NVMEV_INFO("FTL physical space: %lld, logical space: %lld (physical/logical * 100 = %d)\n",
-		   size, ns->size, cpp->pba_pcent);
+		   size, ns->size, fpp->pba_pcent);
 
 	return;
 }
@@ -1465,7 +1501,7 @@ static uint64_t gc_write_page(struct conv_ftl *conv_ftl, struct ppa *old_ppa)
 static uint64_t fdp_gc_write_page(struct fdp_ftl *fdp_ftl, uint32_t ruh_id, struct ppa *old_ppa)
 {
 	struct ssdparams *spp = &fdp_ftl->ssd->sp;
-	struct convparams *cpp = &fdp_ftl->cp;
+	struct fdpparams *fpp = &fdp_ftl->fp;
 	struct ppa new_ppa;
 	uint64_t lpn = get_rmap_ent((struct conv_ftl *) fdp_ftl, old_ppa);
 
@@ -1483,7 +1519,7 @@ static uint64_t fdp_gc_write_page(struct fdp_ftl *fdp_ftl, uint32_t ruh_id, stru
 	/* need to advance the write pointer here */
 	advance_fdp_write_pointer(fdp_ftl, ruh_id, GC_IO);
 
-	if (cpp->enable_gc_delay) {
+	if (fpp->enable_gc_delay) {
 		struct nand_cmd gcw = {
 			.type = GC_IO,
 			.cmd = NAND_NOP,
@@ -1633,7 +1669,7 @@ static void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
 static void fdp_clean_one_flashpg(struct fdp_ftl *fdp_ftl, uint32_t ruh_id, struct ppa *ppa)
 {
 	struct ssdparams *spp = &fdp_ftl->ssd->sp;
-	struct convparams *cpp = &fdp_ftl->cp;
+	struct fdpparams *fpp = &fdp_ftl->fp;
 	struct nand_page *pg_iter = NULL;
 	int cnt = 0, i = 0;
 	uint64_t completed_time = 0;
@@ -1654,7 +1690,7 @@ static void fdp_clean_one_flashpg(struct fdp_ftl *fdp_ftl, uint32_t ruh_id, stru
 	if (cnt <= 0)
 		return;
 
-	if (cpp->enable_gc_delay) {
+	if (fpp->enable_gc_delay) {
 		struct nand_cmd gcr = {
 			.type = GC_IO,
 			.cmd = NAND_READ,
@@ -1816,11 +1852,11 @@ static int fdp_do_gc(struct fdp_ftl *fdp_ftl, bool force)
 					fdp_clean_one_flashpg(fdp_ftl, victim_ru->ruh_id, &ppa);
 
 					if (flashpg == (spp->flashpgs_per_blk - 1)) {
-						struct convparams *cpp = &fdp_ftl->cp;
+						struct fdpparams *fpp = &fdp_ftl->fp;
 
 						mark_block_free((struct conv_ftl *) fdp_ftl, &ppa);
 
-						if (cpp->enable_gc_delay) {
+						if (fpp->enable_gc_delay) {
 							struct nand_cmd gce = {
 								.type = GC_IO,
 								.cmd = NAND_ERASE,
@@ -1848,7 +1884,7 @@ static int fdp_do_gc(struct fdp_ftl *fdp_ftl, bool force)
 
 static void fdp_foreground_gc(struct fdp_ftl *fdp_ftl)
 {
-	if (should_gc_high((struct conv_ftl *) fdp_ftl)) {
+	if (fdp_should_gc_high(fdp_ftl)) {
 		NVMEV_DEBUG_VERBOSE("should_gc_high passed");
 		/* perform GC here until !should_gc(conv_ftl) */
 		fdp_do_gc(fdp_ftl, true);
