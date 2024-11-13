@@ -34,6 +34,9 @@ struct line {
 	struct list_head entry;
 	/* position in the priority queue for victim lines */
 	size_t pos;
+#ifdef FDP_SIMULATOR
+	struct reclaim_unit *rup
+#endif //FDP_SIMULATOR
 };
 
 /* wp: record next write addr */
