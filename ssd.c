@@ -79,11 +79,6 @@ struct nvmev_ns_host_sw_specified *host_spec)
 	spp->luns_per_ch = LUNS_PER_NAND_CH;
 	spp->cell_mode = CELL_MODE;
 
-	/* for FDP */
-	spp->fdp_enabled = 1;
-	spp->nphndls = host_spec->nphndls;
-	spp->ru_nchs = RU_CHANNELS;
-	spp->lines_per_ru = 2;
 
 	/* partitioning SSD by dividing channel*/
 	NVMEV_ASSERT((spp->nchs % nparts) == 0);
@@ -101,6 +96,12 @@ struct nvmev_ns_host_sw_specified *host_spec)
 		spp->blks_per_pl = DIV_ROUND_UP(capacity, blk_size * spp->pls_per_lun *
 								  spp->luns_per_ch * spp->nchs);
 	}
+
+	/* for FDP */
+	spp->fdp_enabled = 1;
+	spp->nphndls = host_spec->nphndls;
+	spp->ru_nchs = RU_CHANNELS;
+	spp->lines_per_ru = 8;
 
 	NVMEV_ASSERT((ONESHOT_PAGE_SIZE % spp->pgsz) == 0 && (FLASH_PAGE_SIZE % spp->pgsz) == 0);
 	NVMEV_ASSERT((ONESHOT_PAGE_SIZE % FLASH_PAGE_SIZE) == 0);

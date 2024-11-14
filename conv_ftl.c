@@ -1957,6 +1957,7 @@ static int fdp_do_gc(struct fdp_ftl *fdp_ftl, bool force)
 	static int gc_rg_idx = 0;
 
 	struct reclaim_unit *victim_ru = NULL;
+	struct reclaim_group_mgmt *rgm = NULL;
 	struct line *victim_line = NULL;
 	
 
@@ -1969,6 +1970,7 @@ static int fdp_do_gc(struct fdp_ftl *fdp_ftl, bool force)
 	NVMEV_INFO("%s: gc_rg_idx %d\n", 
 			__func__, gc_rg_idx);
 	victim_ru = select_victim_ru (fdp_ftl, gc_rg_idx, force);
+	rgm = &fdp_ftl->rgm[gc_rg_idx];
 	gc_rg_idx = (gc_rg_idx + 1) % RG_PER_FTL;
 
 
@@ -1978,7 +1980,6 @@ static int fdp_do_gc(struct fdp_ftl *fdp_ftl, bool force)
 		return -1;
 	}
 
-
 	NVMEV_INFO("%s: victim_ru->ulc %d\n", 
 			__func__, victim_ru->ulc);
 	while (victim_ru->ulc > 0) {
@@ -1987,8 +1988,9 @@ static int fdp_do_gc(struct fdp_ftl *fdp_ftl, bool force)
 
 		victim_ru->ulc --;
 		ppa.g.blk = victim_line->id;
-		NVMEV_INFO("GC-ing line:%d,ipc=%d(%d),victim=%d,full=%d,free=%d\n", ppa.g.blk,
-				victim_line->ipc, victim_line->vpc, fdp_ftl->lm.victim_line_cnt,
+		NVMEV_INFO("GC-ing ru:%d,ipc=%d(%d),victim=%d,full=%d,free=%d line:%d,ipc=%d(%d),victim=%d,full=%d,free=%d\n", 
+				victim_ru->id, victim_ru->ipc, victim_ru->vpc, rgm->victim_ru_cnt, rgm->full_ru_cnt, rgm->free_ru_cnt,
+				ppa.g.blk, victim_line->ipc, victim_line->vpc, fdp_ftl->lm.victim_line_cnt,
 				fdp_ftl->lm.full_line_cnt, fdp_ftl->lm.free_line_cnt);
 		fdp_ftl->wfc.credits_to_refill = victim_ru->ipc;
 
