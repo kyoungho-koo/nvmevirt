@@ -517,7 +517,7 @@ static struct line *get_next_free_line(struct conv_ftl *conv_ftl)
 
 	list_del_init(&curline->entry);
 	lm->free_line_cnt--;
-	NVMEV_INFO("%s: free_line_cnt %d\n", __func__, lm->free_line_cnt);
+	//NVMEV_INFO("%s: free_line_cnt %d\n", __func__, lm->free_line_cnt);
 	return curline;
 }
 
@@ -1559,6 +1559,7 @@ static void mark_placement_page_invalid(struct fdp_ftl *fdp_ftl, int phnd_id, st
 		was_full_ru = true;
 	}
 	ru->ipc++;
+	NVMEV_ASSERT(ru->vpc > 0 && ru->vpc <= spp->pgs_per_ru);
 
 	if (ru->pos) {
 		/* Note that line->vpc will be updated by this call */
@@ -1824,17 +1825,28 @@ static void fdp_clean_one_flashpg(struct fdp_ftl *fdp_ftl, uint32_t ruh_id, stru
 	uint64_t completed_time = 0;
 	struct ppa ppa_copy = *ppa;
 
+	int icnt = 0;
 	for (i = 0; i < spp->pgs_per_flashpg; i++) {
 		pg_iter = get_pg(fdp_ftl->ssd, &ppa_copy);
 		/* there shouldn't be any free page in victim blocks */
+		if (pg_iter->status == PG_FREE) {
+			NVMEV_INFO("%s: PG_FREE ppa: %d\n", __func__, ppa_copy.g.pg);
+			NVMEV_INFO("%s: ipc: %d vpc: %d\n", __func__, icnt, cnt);
+		}
+
 		NVMEV_ASSERT(pg_iter->status != PG_FREE);
 		if (pg_iter->status == PG_VALID)
 			cnt++;
+
+		if (pg_iter->status == PG_INVALID)
+			icnt++;
 
 		ppa_copy.g.pg++;
 	}
 
 	ppa_copy = *ppa;
+	NVMEV_INFO("%s: ipc: %d vpc: %d ppa: %d\n", 
+			__func__, icnt, cnt, ppa_copy.g.pg);
 
 	if (cnt <= 0)
 		return;
@@ -1863,6 +1875,19 @@ static void fdp_clean_one_flashpg(struct fdp_ftl *fdp_ftl, uint32_t ruh_id, stru
 		ppa_copy.g.pg++;
 	}
 }
+
+static void mark_ru_free(struct fdp_ftl *fdp_ftl, struct ppa *ppa)
+{
+	struct reclaim_unit *ru = get_ru(fdp_ftl, ppa);
+	struct reclaim_group_mgmt *rgm = &fdp_ftl->rgm[ru->rg_id];
+
+	ru->ipc = 0;
+	ru->vpc = 0;
+	/* move this line to free line list */
+	list_add_tail(&ru->entry, &rgm->free_ru_list);
+	rgm->free_ru_cnt++;
+	//NVMEV_INFO("[NoFreeLine] %s free_line_cnt++ %d \n", __func__, lm->free_line_cnt);
+}
 #endif //FDP_SIMULATOR
 
 static void mark_line_free(struct conv_ftl *conv_ftl, struct ppa *ppa)
@@ -1871,6 +1896,9 @@ static void mark_line_free(struct conv_ftl *conv_ftl, struct ppa *ppa)
 	struct line *line = get_line(conv_ftl, ppa);
 	line->ipc = 0;
 	line->vpc = 0;
+#ifdef FDP_SIMULATOR
+	line->rup = NULL;
+#endif //FDP_SIMULATOR
 	/* move this line to free line list */
 	list_add_tail(&line->entry, &lm->free_line_list);
 	lm->free_line_cnt++;
@@ -1986,7 +2014,7 @@ static int fdp_do_gc(struct fdp_ftl *fdp_ftl, bool force)
 		victim_line = list_first_entry_or_null(&victim_ru->ru_line_list, 
 				struct line, entry);
 
-		victim_ru->ulc --;
+
 		ppa.g.blk = victim_line->id;
 		NVMEV_INFO("GC-ing ru:%d,ipc=%d(%d),victim=%d,full=%d,free=%d line:%d,ipc=%d(%d),victim=%d,full=%d,free=%d\n", 
 				victim_ru->id, victim_ru->ipc, victim_ru->vpc, rgm->victim_ru_cnt, rgm->full_ru_cnt, rgm->free_ru_cnt,
@@ -2030,12 +2058,16 @@ static int fdp_do_gc(struct fdp_ftl *fdp_ftl, bool force)
 				}
 			}
 		}
+
+		list_del_init(&victim_line->entry);
+		victim_ru->ulc --;
+		/* update line status */
+		mark_line_free((struct conv_ftl *) fdp_ftl, &ppa);
 	}
 
 
+	mark_ru_free(fdp_ftl, &ppa);
 
-	/* update line status */
-	mark_line_free((struct conv_ftl *) fdp_ftl, &ppa);
 
 	return 0;
 }
