@@ -110,6 +110,7 @@ struct reclaim_unit {
 	struct ru_params rp;
 
 	int id;
+	int ch;
 	int ipc; /* invalid page count in this ru */
 	int vpc; /* valid page count in this ru */
 	int ulc; /* used line count in this ru */

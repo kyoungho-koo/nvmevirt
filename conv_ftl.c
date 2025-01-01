@@ -314,8 +314,34 @@ static void prepare_ru_write_pointer(struct fdp_ftl *fdp_ftl, struct reclaim_uni
 	*/
 
 	ru->ulc++;
-
 }
+
+static void prepare_ru_wp_for_channel(struct fdp_ftl *fdp_ftl, struct reclaim_unit *ru) {
+	struct line *curline = get_next_free_line_for_channel(fdp_ftl, ru->ch);
+	struct write_pointer *wp = &ru->wp;
+
+
+	NVMEV_ASSERT(wp);
+	NVMEV_ASSERT(curline);
+
+	*wp = (struct write_pointer){
+		.curline = curline,
+		.ch = ru->ch,
+		.lun = 0,
+		.pg = 0,
+		.blk = curline->id,
+		.pl = 0,
+	};
+
+	list_add_tail(&wp->curline->entry, &ru->ru_line_list);
+	curline->rup = ru;
+	/*
+	NVMEV_INFO("%s: line id %d ru id %d\n", __func__, curline->id, ru->id);
+	*/
+
+	ru->ulc++;
+}
+
 
 /**
  * init_reclaim_group - Initialize a group of reclaim units within the FTL.
@@ -351,6 +377,7 @@ static void init_reclaim_group(struct fdp_ftl *fdp_ftl)
 		for (j = 0; j < rgm->tt_ru; j++) {
 			rgm->ru_entries[j] = (struct reclaim_unit) {
 				.id = i * rgm->tt_ru + j,
+				.ch = i % CH_PER_FTL,
 				.ipc = 0,
 				.vpc = 0,
 				.pos = 0,
