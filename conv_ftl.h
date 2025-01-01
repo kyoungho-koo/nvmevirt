@@ -177,6 +177,9 @@ struct fdp_ftl {
 
 void fdp_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *mapped_addr,
  uint32_t cpu_nr_dispatcher, struct nvmev_ns_host_sw_specified *host_spec);
+
+void fdp_remove_namespace(struct nvmev_ns *ns);
+
 #endif //FDP_SIMULATOR
 void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *mapped_addr,
 			 uint32_t cpu_nr_dispatcher);

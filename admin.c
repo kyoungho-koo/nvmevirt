@@ -755,7 +755,12 @@ static void __nvmev_admin_ns_delete(int eid)
 	nvmev_vdev->free_mapped -= nsp[nsid].size;
 	egp->size -= nsp[nsid].size;
 
-	conv_remove_namespace(&nsp[nsid]);
+	if (egp->fdp_enable) {
+		fdp_remove_namespace(&nsp[nsid]);
+	} else {
+		conv_remove_namespace(&nsp[nsid]);
+	}
+
 
 	NVMEV_INFO("[COMMAND] %s() free_mapped check namespace addr: 0x%p free_mapped: 0x%p\n", 
 			__func__, (void *)&nsp[nsid], nvmev_vdev->free_mapped);

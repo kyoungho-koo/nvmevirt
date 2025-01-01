@@ -61,6 +61,22 @@ static unsigned int __do_perform_io(int sqid, int sq_entry)
 	offset = __cmd_io_offset(cmd);
 	length = __cmd_io_size(cmd);
 	remaining = length;
+#ifdef FDP_SIMULATOR
+	uint32_t dspec = 0;
+
+	if (cmd->opcode == nvme_cmd_write) {
+		//NVMEV_INFO("[FDP_SIMULATOR] %s() vaddr: 0x%p mem_offs: %p 
+		//       nvmev_vdev->ns[nsid: %d].mapped 0x%p offset: %d io_size: %d\n",
+		//		__func__, vaddr, mem_offs, nsid, nvmev_vdev->ns[nsid].mapped, offset, io_size);
+		uint8_t *verify;
+		dspec = NVME_GET(cmd->dsmgmt, READ_WRITE_CDW13_DSPEC);
+		verify = (uint8_t *) kmap_atomic_pfn(PRP_PFN(cmd->prp1));
+
+		if (dspec != *verify && *verify != 0) {
+			NVMEV_INFO("[FDP_VERIFYING] %s() dspec %d verify %d\n", __func__, dspec, *verify);
+		}
+	}
+#endif //FDP_SIMULATOR
 
 	while (remaining) {
 		size_t io_size;
@@ -93,10 +109,17 @@ static unsigned int __do_perform_io(int sqid, int sq_entry)
 
 		if (cmd->opcode == nvme_cmd_write ||
 		    cmd->opcode == nvme_cmd_zone_append) {
+#ifdef FDP_SIMULATOR
+			//NVMEV_INFO("[FDP_SIMULATOR] %s() vaddr: 0x%p mem_offs: %p 
+			//       nvmev_vdev->ns[nsid: %d].mapped 0x%p offset: %d io_size: %d\n",
+			//		__func__, vaddr, mem_offs, nsid, nvmev_vdev->ns[nsid].mapped, offset, io_size);
+			memset(vaddr + mem_offs, dspec, io_size);
+#endif //FDP_SIMULATOR
 			memcpy(nvmev_vdev->ns[nsid].mapped + offset, vaddr + mem_offs, io_size);
 		} else if (cmd->opcode == nvme_cmd_read) {
 #ifdef FDP_SIMULATOR
-			//NVMEV_INFO("[FDP_SIMULATOR] %s() vaddr: 0x%p mem_offs: %p nvmev_vdev->ns[nsid: %d].mapped 0x%p offset: %d io_size: %d\n",
+			//NVMEV_INFO("[FDP_SIMULATOR] %s() vaddr: 0x%p mem_offs: %p 
+			//       nvmev_vdev->ns[nsid: %d].mapped 0x%p offset: %d io_size: %d\n",
 			//		__func__, vaddr, mem_offs, nsid, nvmev_vdev->ns[nsid].mapped, offset, io_size);
 
 #endif //FDP_SIMULATOR

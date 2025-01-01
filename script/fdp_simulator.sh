@@ -1,7 +1,7 @@
 #source ./tool/parameter.sh
 
 NSZE=134217728
-RUNTIME=10
+RUNTIME=1000
 DATE=`date +%y%m%d_%H%M%S`
 RET_DIR=fio_result/nvmevirt_verifing_0703/$DATE
 
@@ -69,9 +69,6 @@ sleep 10
 nvme list
 sleep 10
 
-dd if=/dev/zero of=${BLKDEV}n1 bs=1M count=1000 status=progress
-sleep 1000
-dd if=/dev/zero of=${BLKDEV}n1 bs=1M count=3000000 status=progress
 echo "NVMe Device FDP Status"
 nvme fdp status ${BLKDEV}n1
 
