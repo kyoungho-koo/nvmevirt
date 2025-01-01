@@ -412,6 +412,7 @@ static void remove_reclaim_group(struct fdp_ftl *fdp_ftl)
 		vfree(rgm->ru_entries);
 	}
 }
+
 #endif //FDP_SIMULATOR
 
 static void init_lines(struct conv_ftl *conv_ftl)
@@ -453,6 +454,45 @@ static void init_lines(struct conv_ftl *conv_ftl)
 }
 
 #ifdef FDP_SIMULATOR
+static void init_lines_for_channel(struct fdp_ftl *fdp_ftl, uint32_t target_channel) {
+
+	struct ssdparams *spp = &fdp_ftl->ssd->sp;
+	struct line_mgmt *lm = &fdp_ftl->ch_lm.lm[target_channel];
+
+	struct line *line;
+	int i;
+
+	lm->tt_lines = spp->blks_per_pl;
+	NVMEV_ASSERT(lm->tt_lines == spp->tt_lines);
+	lm->lines = vmalloc(sizeof(struct line) * lm->tt_lines);
+
+	INIT_LIST_HEAD(&lm->free_line_list);
+	INIT_LIST_HEAD(&lm->full_line_list);
+
+	lm->victim_line_pq = pqueue_init(spp->tt_lines, victim_line_cmp_pri, victim_line_get_pri,
+					 victim_line_set_pri, victim_line_get_pos,
+					 victim_line_set_pos);
+
+	lm->free_line_cnt = 0;
+	for (i = 0; i < lm->tt_lines; i++) {
+		lm->lines[i] = (struct line){
+			.id = i,
+			.ipc = 0,
+			.vpc = 0,
+			.pos = 0,
+			.entry = LIST_HEAD_INIT(lm->lines[i].entry),
+		};
+
+		/* initialize all the lines as free lines */
+		list_add_tail(&lm->lines[i].entry, &lm->free_line_list);
+		lm->free_line_cnt++;
+	}
+
+	NVMEV_ASSERT(lm->free_line_cnt == lm->tt_lines);
+	lm->victim_line_cnt = 0;
+	lm->full_line_cnt = 0;
+}
+
 static void init_fdp_write_flow_control(struct fdp_ftl *fdp_ftl)
 {
 	struct write_flow_control *wfc = &(fdp_ftl->wfc);
@@ -468,10 +508,14 @@ static struct reclaim_unit *get_next_free_ru(struct fdp_ftl *fdp_ftl, uint16_t r
 	struct reclaim_group_mgmt *rgm = &fdp_ftl->rgm[rg_id];
 	struct reclaim_unit *cur_ru = list_first_entry_or_null(&rgm->free_ru_list, struct reclaim_unit, entry);
 
+<<<<<<< Updated upstream
 	/*
 	NVMEV_INFO("%s: rg_id %d free_ru_cnt %d from %d\n", __func__, rg_id, rgm->free_ru_cnt, from);
 	*/
 
+=======
+	NVMEV_INFO("RG_ID: %d free_ru_cnt: %d\n", rg_id, rgm->free_ru_cnt);
+>>>>>>> Stashed changes
 	if (!cur_ru) {
 		NVMEV_ERROR("No free RU left in VIRT !!!!\n");
 		return NULL;
@@ -523,6 +567,22 @@ static struct line *get_next_free_line(struct conv_ftl *conv_ftl)
 	return curline;
 }
 
+#ifdef FDP_SIMULATOR
+static struct line *get_next_free_line_for_channel(struct fdp_ftl *fdp_ftl, uint32_t target_channel)
+{
+	struct line_mgmt *lm = &fdp_ftl->ch_lm.lm[target_channel];
+	struct line *curline = list_first_entry_or_null(&lm->free_line_list, struct line, entry);
+
+	if (!curline) {
+		NVMEV_ERROR("No free line left for channel %d\n", target_channel);
+		return NULL;
+	}
+
+	list_del_init(&curline->entry);
+	lm->free_line_cnt--;
+	return curline;
+}
+#endif //FDP_SIMULATOR
 
 static struct write_pointer *__get_wp(struct conv_ftl *ftl, uint32_t io_type)
 {
@@ -2521,6 +2581,10 @@ static bool fdp_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
 			NVMEV_INFO("%s: got new ppa %lld, ", __func__, ppa2pgidx((struct conv_ftl *) fdp_ftl, &ppa));
 		}
 		*/
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
 		/* update rmap */
 		set_rmap_ent((struct conv_ftl *) fdp_ftl, local_lpn, &ppa);
 

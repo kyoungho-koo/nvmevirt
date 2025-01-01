@@ -63,6 +63,7 @@ struct line_mgmt {
 	uint32_t full_line_cnt;
 };
 
+
 struct write_flow_control {
 	uint32_t write_credits;
 	uint32_t credits_to_refill;
@@ -82,7 +83,6 @@ struct conv_ftl {
 };
 
 #ifdef FDP_SIMULATOR
-
 struct reclaim_group_mgmt {
 	int id;
 	struct reclaim_unit *ru_entries;
@@ -157,6 +157,11 @@ struct placement_handle_list {
 };
 
 
+struct channel_line_mgmt {
+	struct line_mgmt lm[CH_PER_FTL];
+};
+
+
 struct fdp_ftl {
 	struct ssd *ssd;
 
@@ -167,6 +172,8 @@ struct fdp_ftl {
 	struct write_pointer gc_wp;
 
 	struct line_mgmt lm;
+	struct channel_line_mgmt ch_lm;
+
 	struct write_flow_control wfc;
 	int		id;
 
