@@ -86,6 +86,7 @@ struct conv_ftl {
 struct reclaim_group_mgmt {
 	int id;
 	struct reclaim_unit *ru_entries;
+	int ch;
 
 	/* free line list, we only need to maintain a list of blk numbers */
 	struct list_head free_ru_list;
