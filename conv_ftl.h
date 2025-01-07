@@ -158,6 +158,9 @@ struct placement_handle_list {
 	struct placement_handle phnd[];
 };
 
+struct lun_line_mgmt {
+	struct line_mgmt lm[LUN_PER_FTL];
+};
 
 struct channel_line_mgmt {
 	struct line_mgmt lm[CH_PER_FTL];
@@ -174,6 +177,7 @@ struct fdp_ftl {
 	struct write_pointer gc_wp;
 
 	struct line_mgmt lm;
+	struct lun_line_mgmt lun_lm;
 	struct channel_line_mgmt ch_lm;
 
 	struct write_flow_control wfc;
