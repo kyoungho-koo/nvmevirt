@@ -266,8 +266,8 @@ static void init_fdp_lines_for_lun(struct fdp_ftl *fdp_ftl, uint32_t ch, uint32_
 		lm->free_line_cnt++;
 	}
 
-	NVMEV_INFO("%s: target_lun %d lm->free_line_cnt %d\n", 
-			__func__, target_lun, lm->free_line_cnt);
+	NVMEV_INFO("%s: ch %d lun %d lm->free_line_cnt %d\n", 
+			__func__, ch, lun, lm->free_line_cnt);
 
 
 	NVMEV_ASSERT(lm->free_line_cnt == lm->tt_lines);
@@ -275,6 +275,7 @@ static void init_fdp_lines_for_lun(struct fdp_ftl *fdp_ftl, uint32_t ch, uint32_
 	lm->full_line_cnt = 0;
 }
 
+/*
 static void init_fdp_lines_for_channel(struct fdp_ftl *fdp_ftl, uint32_t target_channel) {
 
 	struct ssdparams *spp = &fdp_ftl->ssd->sp;
@@ -304,7 +305,6 @@ static void init_fdp_lines_for_channel(struct fdp_ftl *fdp_ftl, uint32_t target_
 			.entry = LIST_HEAD_INIT(lm->lines[i].entry),
 		};
 
-		/* initialize all the lines as free lines */
 		list_add_tail(&lm->lines[i].entry, &lm->free_line_list);
 		lm->free_line_cnt++;
 	}
@@ -317,6 +317,7 @@ static void init_fdp_lines_for_channel(struct fdp_ftl *fdp_ftl, uint32_t target_
 	lm->victim_line_cnt = 0;
 	lm->full_line_cnt = 0;
 }
+*/
 
 static void init_fdp_lines(struct fdp_ftl *fdp_ftl)
 {
@@ -363,6 +364,7 @@ static void remove_fdp_lines(struct fdp_ftl *fdp_ftl)
 	vfree(fdp_ftl->lm.lines);
 }
 
+/*
 static void remove_fdp_lines_for_channel(struct fdp_ftl *fdp_ftl, uint32_t target_channel)
 {
 	struct line_mgmt *lm = &fdp_ftl->ch_lm.lm[target_channel];
@@ -370,6 +372,7 @@ static void remove_fdp_lines_for_channel(struct fdp_ftl *fdp_ftl, uint32_t targe
 	pqueue_free(lm->victim_line_pq);
 	vfree(lm->lines);
 }
+*/
 
 static void remove_fdp_lines_for_lun(struct fdp_ftl *fdp_ftl, uint32_t ch, uint32_t lun)
 {
@@ -709,6 +712,7 @@ static struct line *get_next_free_line_for_lun(struct fdp_ftl *fdp_ftl, struct r
 	return curline;
 }
 
+/*
 static struct line *get_next_free_line_for_channel(struct fdp_ftl *fdp_ftl, uint32_t target_channel)
 {
 	struct line_mgmt *lm = &fdp_ftl->ch_lm.lm[target_channel];
@@ -723,6 +727,7 @@ static struct line *get_next_free_line_for_channel(struct fdp_ftl *fdp_ftl, uint
 	lm->free_line_cnt--;
 	return curline;
 }
+*/
 #endif //FDP_SIMULATOR
 
 static struct write_pointer *__get_wp(struct conv_ftl *ftl, uint32_t io_type)
@@ -1355,7 +1360,7 @@ static void fdp_init_ftl(struct fdp_ftl *fdp_ftl, int ftl_id, struct fdpparams *
 
 	/* initialize all the lines for fdp_v2: per die*/
 	for (i = 0; i < CH_PER_FTL; i++) {
-		for (j = 0; j < LUN_PER_NAND_CH; j++) {
+		for (j = 0; j < LUNS_PER_NAND_CH; j++) {
 			init_fdp_lines_for_lun(fdp_ftl, i, j);
 		}
 	}
@@ -1395,7 +1400,7 @@ static void fdp_remove_ftl(struct fdp_ftl *fdp_ftl)
 	/* remove all the lines for fdp_v2 (per LUN) */
 	int i, j;
 	for (i = 0; i < CH_PER_FTL; i++) {
-		for (j = 0; j < LUN_PER_NAND_CH; j++) {
+		for (j = 0; j < LUNS_PER_NAND_CH; j++) {
 			remove_fdp_lines_for_lun(fdp_ftl, i, j);
 		}
 	}
@@ -1656,18 +1661,21 @@ static inline struct line *get_line(struct conv_ftl *conv_ftl, struct ppa *ppa)
 #ifdef FDP_SIMULATOR
 static inline struct line *get_line_per_lun(struct fdp_ftl *fdp_ftl, struct ppa *ppa)
 {
-	return &(fdp_ftl->lun_lm.lm[ppa->g.lun].lines[ppa->g.blk]);
+	return &(fdp_ftl->ch_lm.lun_lm[ppa->g.ch].lm[ppa->g.lun].lines[ppa->g.blk]);
 }
 
+/*
 static inline struct line *get_line_per_channel(struct fdp_ftl *fdp_ftl, struct ppa *ppa)
 {
 	return &(fdp_ftl->ch_lm.lm[ppa->g.ch].lines[ppa->g.blk]);
 }
+*/
 
 static inline struct reclaim_unit *get_ru(struct fdp_ftl *fdp_ftl, struct ppa *ppa)
 {
 	struct line *line;
-	line = get_line_per_channel(fdp_ftl, ppa);
+	// line = get_line_per_channel(fdp_ftl, ppa);
+	line = get_line_per_lun(fdp_ftl, ppa);
 
 	return line->rup;
 }
@@ -1772,7 +1780,7 @@ static void fdp_mark_page_valid(struct fdp_ftl *fdp_ftl, struct ppa *ppa, int wh
 	blk->vpc++;
 
 	/* update corresponding line status */
-	line = get_line_per_channel(fdp_ftl, ppa);
+	line = get_line_per_lun(fdp_ftl, ppa);
 	NVMEV_ASSERT(line->vpc >= 0 && line->vpc < spp->pgs_per_line);
 	line->vpc++;
 
@@ -1839,7 +1847,7 @@ static void mark_placement_page_invalid(struct fdp_ftl *fdp_ftl, int phnd_id, st
 	blk->vpc--;
 
 	/* update corresponding line status */
-	line = get_line_per_channel(fdp_ftl, ppa);
+	line = get_line_per_lun(fdp_ftl, ppa);
 	NVMEV_ASSERT(line->ipc >= 0 && line->ipc < spp->pgs_per_line);
 	NVMEV_INFO("%s() line->vpc %d spp->pgs_per_line %d\n", __func__,line->vpc, spp->pgs_per_line);
 	line->ipc++;

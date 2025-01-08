@@ -162,7 +162,7 @@ struct placement_handle_list {
 };
 
 struct lun_line_mgmt {
-	struct line_mgmt lm[LUN_PER_NAND_CH];
+	struct line_mgmt lm[LUNS_PER_NAND_CH];
 };
 
 struct channel_line_mgmt {
