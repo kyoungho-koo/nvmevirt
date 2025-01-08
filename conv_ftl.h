@@ -87,6 +87,7 @@ struct reclaim_group_mgmt {
 	int id;
 	struct reclaim_unit *ru_entries;
 	int ch;
+	int lun;
 
 	/* free line list, we only need to maintain a list of blk numbers */
 	struct list_head free_ru_list;
@@ -112,6 +113,8 @@ struct reclaim_unit {
 
 	int id;
 	int ch;
+	int lun;
+
 	int ipc; /* invalid page count in this ru */
 	int vpc; /* valid page count in this ru */
 	int ulc; /* used line count in this ru */
@@ -159,11 +162,11 @@ struct placement_handle_list {
 };
 
 struct lun_line_mgmt {
-	struct line_mgmt lm[LUN_PER_FTL];
+	struct line_mgmt lm[LUN_PER_NAND_CH];
 };
 
 struct channel_line_mgmt {
-	struct line_mgmt lm[CH_PER_FTL];
+	struct lun_line_mgmt lun_lm[CH_PER_FTL];
 };
 
 
@@ -177,7 +180,6 @@ struct fdp_ftl {
 	struct write_pointer gc_wp;
 
 	struct line_mgmt lm;
-	struct lun_line_mgmt lun_lm;
 	struct channel_line_mgmt ch_lm;
 
 	struct write_flow_control wfc;

@@ -232,10 +232,10 @@ static inline void fdp_check_and_refill_write_credit(struct fdp_ftl *fdp_ftl)
 	}
 }
 
-static void init_fdp_lines_for_lun(struct fdp_ftl *fdp_ftl, uint32_t target_lun) {
+static void init_fdp_lines_for_lun(struct fdp_ftl *fdp_ftl, uint32_t ch, uint32_t lun) {
 
 	struct ssdparams *spp = &fdp_ftl->ssd->sp;
-	struct line_mgmt *lm = &fdp_ftl->lun_lm.lm[target_lun];
+	struct line_mgmt *lm = &fdp_ftl->ch_lm.lun_lm[ch].lm[lun];
 
 	struct line *line;
 	int i;
@@ -371,9 +371,9 @@ static void remove_fdp_lines_for_channel(struct fdp_ftl *fdp_ftl, uint32_t targe
 	vfree(lm->lines);
 }
 
-static void remove_fdp_lines_for_lun(struct fdp_ftl *fdp_ftl, uint32_t target_lun)
+static void remove_fdp_lines_for_lun(struct fdp_ftl *fdp_ftl, uint32_t ch, uint32_t lun)
 {
-	struct line_mgmt *lm = &fdp_ftl->lun_lm.lm[target_lun];
+	struct line_mgmt *lm = &fdp_ftl->ch_lm.lun_lm[ch].lm[lun];
 
 	pqueue_free(lm->victim_line_pq);
 	vfree(lm->lines);
@@ -415,6 +415,31 @@ static void prepare_ru_write_pointer(struct fdp_ftl *fdp_ftl, struct reclaim_uni
 	/*
 	NVMEV_INFO("%s: line id %d ru id %d\n", __func__, curline->id, ru->id);
 	*/
+
+	ru->ulc++;
+}
+
+static struct line *get_next_free_line_for_lun(struct fdp_ftl *fdp_ftl, struct reclaim_unit *ru);
+
+static void prepare_ru_wp_for_lun(struct fdp_ftl *fdp_ftl, struct reclaim_unit *ru) {
+	struct line *curline = get_next_free_line_for_lun(fdp_ftl, ru);
+	struct write_pointer *wp = &ru->wp;
+
+	NVMEV_ASSERT(wp);
+	NVMEV_ASSERT(curline);
+
+	*wp = (struct write_pointer){
+		.curline = curline,
+		.ch = ru->ch,
+		.lun = 0,
+		.pg = 0,
+		.blk = curline->id,
+		.pl = 0,
+	};
+
+	list_add_tail(&wp->curline->entry, &ru->ru_line_list);
+	curline->rup = ru;
+	NVMEV_INFO("%s: line->id %d ru->id %d ru->ch %d ru->lun %d\n", __func__, curline->id, ru->id, ru->ch, ru->lun);
 
 	ru->ulc++;
 }
@@ -468,6 +493,8 @@ static void init_reclaim_group(struct fdp_ftl *fdp_ftl)
 
 		rgm->tt_ru = RU_PER_RG + 32;  // Allocate additional reclaim unit 
 		rgm->ch = i % CH_PER_FTL;
+		rgm->lun = i / CH_PER_FTL;
+
 		rgm->ru_entries = vmalloc(sizeof(struct reclaim_unit) * rgm->tt_ru);
 		INIT_LIST_HEAD(&rgm->free_ru_list);
 		INIT_LIST_HEAD(&rgm->full_ru_list);
@@ -481,6 +508,7 @@ static void init_reclaim_group(struct fdp_ftl *fdp_ftl)
 			rgm->ru_entries[j] = (struct reclaim_unit) {
 				.id = i * rgm->tt_ru + j,
 				.ch = rgm->ch,
+				.lun = rgm->lun,
 				.ipc = 0,
 				.vpc = 0,
 				.pos = 0,
@@ -610,8 +638,11 @@ static struct reclaim_unit *get_next_free_ru(struct fdp_ftl *fdp_ftl, uint16_t r
 	/* fdp_v1 */
 	// prepare_ru_write_pointer(fdp_ftl, cur_ru);
 
-	/* fdp_v2 */
-	prepare_ru_wp_for_channel(fdp_ftl, cur_ru);
+	/* fdp_v2 : per Channel */
+	// prepare_ru_wp_for_channel(fdp_ftl, cur_ru);
+
+	/* fdp_v2 : per Channel */
+	prepare_ru_wp_for_lun(fdp_ftl, cur_ru);
 
 	struct line *ru_line = list_first_entry_or_null(&cur_ru->ru_line_list, 
 				struct line, entry);
@@ -663,6 +694,21 @@ static struct line *get_next_free_line(struct conv_ftl *conv_ftl)
 }
 
 #ifdef FDP_SIMULATOR
+static struct line *get_next_free_line_for_lun(struct fdp_ftl *fdp_ftl, struct reclaim_unit *ru)
+{
+	struct line_mgmt *lm = &fdp_ftl->ch_lm.lun_lm[ru->ch].lm[ru->lun];
+	struct line *curline = list_first_entry_or_null(&lm->free_line_list, struct line, entry);
+
+	if (!curline) {
+		NVMEV_ERROR("No free line left for ch %d lun %d\n", ru->ch, ru->lun);
+		return NULL;
+	}
+
+	list_del_init(&curline->entry);
+	lm->free_line_cnt--;
+	return curline;
+}
+
 static struct line *get_next_free_line_for_channel(struct fdp_ftl *fdp_ftl, uint32_t target_channel)
 {
 	struct line_mgmt *lm = &fdp_ftl->ch_lm.lm[target_channel];
@@ -944,7 +990,6 @@ static void prepare_fdp_write_pointer(struct fdp_ftl *fdp_ftl, uint32_t io_type)
 static void advance_fdp_ru_pointer(struct fdp_ftl *fdp_ftl, uint32_t phnd_id, uint32_t io_type) 
 {
 	struct ssdparams *spp = &fdp_ftl->ssd->sp;
-	struct line_mgmt *lm = &fdp_ftl->lm;
 	struct reclaim_unit_handle *ruh = __get_ftl_ruh(fdp_ftl, phnd_id);
 	struct reclaim_unit *rup = __get_ruh_ru(ruh, io_type);
 	struct write_pointer *wpp = &rup->wp;
@@ -955,8 +1000,12 @@ static void advance_fdp_ru_pointer(struct fdp_ftl *fdp_ftl, uint32_t phnd_id, ui
 		/* current line is used up, pick another empty line */
 		check_addr(wpp->blk, spp->blks_per_pl);
 
-		/* fdp_v2 */
-		wpp->curline = get_next_free_line_for_channel(fdp_ftl, rup->ch);
+		/* fdp_v2 : per Channel*/
+		// wpp->curline = get_next_free_line_for_channel(fdp_ftl, rup->ch);
+
+		/* fdp_v2 : per LUN*/
+		wpp->curline = get_next_free_line_for_lun(fdp_ftl, rup);
+
 		if (io_type == GC_IO) {
 			NVMEV_INFO("%s: GC_IO rg_id %d rup->pgs %d rup->ulc %d\n", 
 					__func__, *ru_idx, rup->pgs, rup->ulc);
@@ -1020,8 +1069,6 @@ out:
 static void advance_fdp_write_pointer(struct fdp_ftl *fdp_ftl, uint32_t phnd_id, uint32_t io_type)
 {
 	struct ssdparams *spp = &fdp_ftl->ssd->sp;
-	struct line_mgmt *lm = &fdp_ftl->lm;
-
 	struct reclaim_unit_handle *ruh = fdp_ftl->phndls->phnd[phnd_id].ruh;
 
 	struct reclaim_unit *rup = __get_ftl_ru(fdp_ftl, phnd_id, io_type);
@@ -1039,36 +1086,14 @@ static void advance_fdp_write_pointer(struct fdp_ftl *fdp_ftl, uint32_t phnd_id,
 		goto out;
 	}
 
-	wpp->pg -= spp->pgs_per_oneshotpg;
-
-
 	check_addr(rup->ch, CH_PER_FTL);
 
 	/* fdp_v2 : wpp->ch++ */
 	rotate_ruh_next_ru_pointer(ruh, io_type);
 	rup = __get_ruh_ru(ruh, io_type);
 	wpp = &rup->wp;
-	if (wpp->ch != CH_PER_FTL) {
-		//NVMEV_INFO("[NoFreeLine] %s() goto out 2\n", __func__);
-		goto out;
-	}
-	/* fdp_v2 : wpp->ch = 0 */
-	rotate_ruh_next_ru_pointer(ruh, io_type);
-	rup = __get_ruh_ru(ruh, io_type);
-	wpp = &rup->wp;
-	
-
 	check_addr(wpp->lun, spp->luns_per_ch);
-	wpp->lun++;
-	/* in this case, we should go to next lun */
-	if (wpp->lun != spp->luns_per_ch) {
-		//NVMEV_INFO("[NoFreeLine] %s() goto out 3\n", __func__);
-		goto out;
-	}
 
-	wpp->lun = 0;
-	/* go to next wordline in the block */
-	wpp->pg += spp->pgs_per_oneshotpg;
 	if (wpp->pg != spp->pgs_per_blk) {
 		//NVMEV_INFO("[NoFreeLine] %s() goto out 4\n", __func__);
 		goto out;
@@ -1089,12 +1114,8 @@ static void advance_fdp_write_pointer(struct fdp_ftl *fdp_ftl, uint32_t phnd_id,
 
 out:
 	rup->pgs++;
-	/*
-	if (io_type == GC_IO) {
-		NVMEV_INFO("advanced wpp: GC_IO ch:%d, lun:%d, pl:%d, blk:%d, pg:%d (curline %d)\n",
+	NVMEV_INFO("advanced wpp: GC_IO ch:%d, lun:%d, pl:%d, blk:%d, pg:%d (curline %d)\n",
 				wpp->ch, wpp->lun, wpp->pl, wpp->blk, wpp->pg, wpp->curline->id);
-	}
-	*/
 
 }
 
@@ -1307,7 +1328,7 @@ static void remove_fdp_placement(struct fdp_ftl *fdp_ftl)
 
 static void fdp_init_ftl(struct fdp_ftl *fdp_ftl, int ftl_id, struct fdpparams *fpp, struct ssd *ssd)
 {
-	int i;
+	int i, j;
 
 	fdp_ftl->id = ftl_id;
 
@@ -1333,8 +1354,10 @@ static void fdp_init_ftl(struct fdp_ftl *fdp_ftl, int ftl_id, struct fdpparams *
 	*/
 
 	/* initialize all the lines for fdp_v2: per die*/
-	for (i = 0; i < LUN_PER_FTL; i++) {
-		init_fdp_lines_for_lun(fdp_ftl, i);
+	for (i = 0; i < CH_PER_FTL; i++) {
+		for (j = 0; j < LUN_PER_NAND_CH; j++) {
+			init_fdp_lines_for_lun(fdp_ftl, i, j);
+		}
 	}
 
 
@@ -1370,9 +1393,11 @@ static void fdp_remove_ftl(struct fdp_ftl *fdp_ftl)
 	*/
 
 	/* remove all the lines for fdp_v2 (per LUN) */
-	int i;
-	for (i = 0; i < LUN_PER_FTL; i++) {
-		remove_fdp_lines_for_lun(fdp_ftl, i);
+	int i, j;
+	for (i = 0; i < CH_PER_FTL; i++) {
+		for (j = 0; j < LUN_PER_NAND_CH; j++) {
+			remove_fdp_lines_for_lun(fdp_ftl, i, j);
+		}
 	}
 
 	remove_rmap((struct conv_ftl *) fdp_ftl);
