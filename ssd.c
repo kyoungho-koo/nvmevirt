@@ -161,7 +161,7 @@ struct nvmev_ns_host_sw_specified *host_spec)
 	spp->tt_luns = spp->luns_per_ch * spp->nchs;
 
 	/* line is special, put it at the end */
-	spp->blks_per_line = spp->tt_luns; /* TODO: to fix under multiplanes */
+	spp->blks_per_line = 1; /* TODO: to fix under multiplanes */
 	spp->pgs_per_line = spp->blks_per_line * spp->pgs_per_blk;
 
 	/* for FDP */
@@ -176,6 +176,10 @@ struct nvmev_ns_host_sw_specified *host_spec)
 	total_size = (unsigned long)spp->tt_luns * spp->blks_per_lun * spp->pgs_per_blk *
 		     spp->secsz * spp->secs_per_pg;
 	blk_size = spp->pgs_per_blk * spp->secsz * spp->secs_per_pg;
+	NVMEV_INFO("%s: blk_size %d pgs_per_line %d nchs %d pgs_per_ch %d luns_per_ch %d pls_per_lun %d tt_pgs %d blks_per_line %d\n", 
+			__func__, blk_size, spp->pgs_per_line, spp->nchs, spp->pgs_per_ch, 
+			spp->luns_per_ch, spp->pls_per_lun, spp->tt_pgs, spp->blks_per_line);
+
 	NVMEV_INFO(
 		"Total Capacity(GiB,MiB)=%llu,%llu chs=%u luns=%lu lines=%lu blk-size(MiB,KiB)=%u,%u line-size(MiB,KiB)=%lu,%lu",
 		BYTE_TO_GB(total_size), BYTE_TO_MB(total_size), spp->nchs, spp->tt_luns,
@@ -286,6 +290,10 @@ void ssd_init_params(struct ssdparams *spp, uint64_t capacity, uint32_t nparts)
 	total_size = (unsigned long)spp->tt_luns * spp->blks_per_lun * spp->pgs_per_blk *
 		     spp->secsz * spp->secs_per_pg;
 	blk_size = spp->pgs_per_blk * spp->secsz * spp->secs_per_pg;
+
+	NVMEV_INFO("%s: blk_size %d pgs_per_line %d nchs %d pgs_per_ch %d luns_per_ch %d pls_per_lun %d tt_pgs %d blks_per_line %d\n", 
+			__func__, blk_size, spp->pgs_per_line, spp->nchs, spp->pgs_per_ch, 
+			spp->luns_per_ch, spp->pls_per_lun, spp->tt_pgs, spp->blks_per_line);
 	NVMEV_INFO(
 		"Total Capacity(GiB,MiB)=%llu,%llu chs=%u luns=%lu lines=%lu blk-size(MiB,KiB)=%u,%u line-size(MiB,KiB)=%lu,%lu",
 		BYTE_TO_GB(total_size), BYTE_TO_MB(total_size), spp->nchs, spp->tt_luns,

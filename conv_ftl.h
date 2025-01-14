@@ -179,7 +179,7 @@ struct fdp_ftl {
 	struct write_pointer wp;
 	struct write_pointer gc_wp;
 
-	struct line_mgmt lm;
+	//struct line_mgmt lm;
 	struct channel_line_mgmt ch_lm;
 
 	struct write_flow_control wfc;
