@@ -6,6 +6,14 @@
 #include "nvmev.h"
 #include "conv_ftl.h"
 
+#ifdef WAF
+unsigned long long OS_TimeGetUS (void) {
+	struct timespec64 lTime;
+	ktime_get_coarse_real_ts64(&lTime);
+	return (lTime.tv_sec * 1000000 + div_u64(lTime.tv_nsec, 1000) );
+}
+#endif //WAF
+
 static inline bool last_pg_in_wordline(struct conv_ftl *conv_ftl, struct ppa *ppa)
 {
 	struct ssdparams *spp = &conv_ftl->ssd->sp;
@@ -391,6 +399,9 @@ void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *
 		ssd = kmalloc(sizeof(struct ssd), GFP_KERNEL);
 		ssd_init(ssd, &spp, cpu_nr_dispatcher);
 		conv_init_ftl(&conv_ftls[i], &cpp, ssd);
+#ifdef WAF
+		conv_ftls[i].ns = ns;
+#endif //WAF
 	}
 
 	/* PCIe, Write buffer are shared by all instances*/
@@ -414,7 +425,13 @@ void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *
 
 	NVMEV_INFO("FTL physical space: %lld, logical space: %lld (physical/logical * 100 = %d)\n",
 		   size, ns->size, cpp.pba_pcent);
-
+#ifdef WAF
+	ns->last_t = 0;
+	ns->write_volume_host = 0;
+	ns->write_volume_gc = 0;
+	ns->total_write_volume_host = 0;
+	ns->total_write_volume_gc = 0;
+#endif //WAF
 	return;
 }
 
@@ -758,14 +775,19 @@ static int do_gc(struct conv_ftl *conv_ftl, bool force)
 
 	victim_line = select_victim_line(conv_ftl, force);
 	if (!victim_line) {
+		NVMEV_INFO("Victim line is NULL\n");
 		return -1;
 	}
 
 	ppa.g.blk = victim_line->id;
-	NVMEV_DEBUG_VERBOSE("GC-ing line:%d,ipc=%d(%d),victim=%d,full=%d,free=%d\n", ppa.g.blk,
+	NVMEV_DEBUG("GC-ing line:%d,ipc=%d(%d),victim=%d,full=%d,free=%d\n", ppa.g.blk,
 		    victim_line->ipc, victim_line->vpc, conv_ftl->lm.victim_line_cnt,
 		    conv_ftl->lm.full_line_cnt, conv_ftl->lm.free_line_cnt);
 
+#ifdef WAF
+	conv_ftl->ns->write_volume_gc += victim_line->vpc;
+	conv_ftl->ns->total_write_volume_gc += victim_line->vpc;
+#endif //WAF
 	conv_ftl->wfc.credits_to_refill = victim_line->ipc;
 
 	/* copy back valid data */
@@ -921,6 +943,44 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
 	return true;
 }
 
+#ifdef WAF
+
+#define SEC_IN_USEC 1000000
+#define MSEC_IN_USEC 1000
+#define PRINT_TIME_SEC 1
+#define WAF_TIME_INTERVAL	(PRINT_TIME_SEC * SEC_IN_USEC)
+#define CHIP_UTIL_TIME_INTERVAL	(SEC_IN_USEC)
+
+static inline void print_WAF(struct nvmev_ns *ns)
+{
+	if (!ns->write_volume_host)
+		return;
+
+	unsigned int waf =
+		(100 * (ns->write_volume_gc + ns->write_volume_host)) / ns->write_volume_host;
+	unsigned int total_waf =
+		(100 * (ns->total_write_volume_gc + ns->total_write_volume_host))
+		/ ns->total_write_volume_host;
+	printk("%s: WAF: %u percent gc: %llu KB write_req: %llu KB total: %llu total WAF: %u percent\n",
+			__func__, waf, ns->write_volume_gc * 4, ns->write_volume_host * 4,
+			ns->total_write_volume_host * 4, total_waf);
+}
+
+static inline void try_print_WAF(struct nvmev_ns *ns)
+{
+	unsigned long long cur_t = OS_TimeGetUS();
+
+	if (cur_t - ns->last_t <= WAF_TIME_INTERVAL) {
+		return;
+	}
+
+	print_WAF(ns);
+	ns->last_t = cur_t;
+	ns->write_volume_host = 0;
+	ns->write_volume_gc = 0;
+}
+#endif //WAF
+
 static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
 {
 	struct conv_ftl *conv_ftls = (struct conv_ftl *)ns->ftls;
@@ -950,6 +1010,10 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
 		.xfer_size = spp->pgsz * spp->pgs_per_oneshotpg,
 	};
 
+#ifdef WAF
+	try_print_WAF(ns);
+#endif //WAF
+
 	NVMEV_DEBUG_VERBOSE("%s: start_lpn=%lld, len=%lld, end_lpn=%lld", __func__, start_lpn, nr_lba, end_lpn);
 	if ((end_lpn / nr_parts) >= spp->tt_pgs) {
 		NVMEV_ERROR("%s: lpn passed FTL range (start_lpn=%lld > tt_pgs=%ld)\n",
@@ -966,6 +1030,11 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
 	nsecs_xfer_completed = nsecs_latest;
 
 	swr.stime = nsecs_latest;
+
+#ifdef WAF
+	ns->write_volume_host += (end_lpn - start_lpn + 1);
+	ns->total_write_volume_host += (end_lpn -start_lpn + 1);
+#endif //WAF
 
 	for (lpn = start_lpn; lpn <= end_lpn; lpn++) {
 		uint64_t local_lpn;
@@ -1068,3 +1137,4 @@ bool conv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req, struc
 
 	return true;
 }
+

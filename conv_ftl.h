@@ -56,6 +56,9 @@ struct write_flow_control {
 };
 
 struct conv_ftl {
+#ifdef WAF
+	struct nvmev_ns *ns;
+#endif //WAF
 	struct ssd *ssd;
 
 	struct convparams cp;
