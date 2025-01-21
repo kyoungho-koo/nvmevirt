@@ -351,6 +351,13 @@ struct nvmev_ns {
 	/*specific CSS io command processor*/
 	unsigned int (*perform_io_cmd)(struct nvmev_ns *ns, struct nvme_command *cmd,
 				       uint32_t *status);
+#ifdef WAF
+	unsigned long long last_t;
+	unsigned long long write_volume_host;
+	unsigned long long write_volume_gc;
+	unsigned long long total_write_volume_host;
+	unsigned long long total_write_volume_gc;
+#endif
 };
 
 // VDEV Init, Final Function

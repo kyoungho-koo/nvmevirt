@@ -10,6 +10,7 @@ nvmev-objs := main.o pci.o admin.o io.o dma.o
 ccflags-y += -Wno-unused-variable -Wno-unused-function
 ccflags-$(CONFIG_NVMEVIRT_FDP) += -DFDP_SIMULATOR
 ccflags-$(CONFIG_NVMEVIRT_FDP) += -DBUG_FIX
+ccflags-$(CONFIG_NVMEVIRT_FDP) += -DWAF
 
 ccflags-$(CONFIG_NVMEVIRT_NVM) += -DBASE_SSD=INTEL_OPTANE
 nvmev-$(CONFIG_NVMEVIRT_NVM) += simple_ftl.o
