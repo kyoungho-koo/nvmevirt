@@ -737,8 +737,10 @@ static struct reclaim_unit *get_next_free_ru(struct fdp_ftl *fdp_ftl, struct rec
 	struct line *ru_line = list_first_entry_or_null(&cur_ru->ru_line_list, 
 				struct line, entry);
 	
+	/*
 	NVMEV_INFO("%s: rg_id %d free_ru_cnt %d cur_ru->id %d ru_line->id %d from %d\n", 
 			__func__, rg_id, rgm->free_ru_cnt, cur_ru->id, ru_line->id, from);
+			*/
 
 
 	list_del_init(&cur_ru->entry);
@@ -1896,6 +1898,9 @@ static void fdp_mark_page_valid(struct fdp_ftl *fdp_ftl, struct ppa *ppa, int wh
 
 	/* update corresponding ru status */
 	ru = get_ru(fdp_ftl, ppa);
+	if (ru->vpc < 0 || ru->vpc >= spp->pgs_per_ru) {
+		NVMEV_INFO("%s: spp->pgs_per_ru %d ru->vpc %d \n", spp->pgs_per_ru, ru->vpc);
+	}
 	NVMEV_ASSERT(ru->vpc >= 0 && ru->vpc < spp->pgs_per_ru);
 	ru->vpc++;
 }

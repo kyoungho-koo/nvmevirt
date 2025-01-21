@@ -101,7 +101,7 @@ struct nvmev_ns_host_sw_specified *host_spec)
 	spp->fdp_enabled = 1;
 	spp->nphndls = host_spec->nphndls;
 	spp->ru_nchs = RU_CHANNELS;
-	spp->lines_per_ru = 8;
+	spp->lines_per_ru = LINES_PER_RU;
 
 	NVMEV_ASSERT((ONESHOT_PAGE_SIZE % spp->pgsz) == 0 && (FLASH_PAGE_SIZE % spp->pgsz) == 0);
 	NVMEV_ASSERT((ONESHOT_PAGE_SIZE % FLASH_PAGE_SIZE) == 0);
@@ -170,6 +170,8 @@ struct nvmev_ns_host_sw_specified *host_spec)
 	spp->secs_per_line = spp->pgs_per_line * spp->secs_per_pg;
 	spp->tt_lines = spp->blks_per_lun;
 	/* TODO: to fix under multiplanes */ // lun size is super-block(line) size
+
+	NVMEV_ASSERT(RU_PER_RG * LINES_PER_RU == spp->tt_lines);
 
 	check_params(spp);
 
