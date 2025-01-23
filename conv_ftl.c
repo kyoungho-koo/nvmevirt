@@ -250,9 +250,16 @@ static inline void victim_ru_set_pos(void *a, size_t pos)
 {
 	((struct reclaim_unit *)a)->pos = pos;
 }
+
 static inline void fdp_consume_write_credit(struct fdp_ftl *fdp_ftl)
 {
 	fdp_ftl->wfc.write_credits--;
+}
+
+static inline void fdp_consume_write_credit_per_ruh(struct fdp_ftl *fdp_ftl, int ruh_id)
+{
+	struct placement_handle *phnd = &(fdp_ftl->phndls->phnd[ruh_id]);
+	phnd->wfc.write_credits--;
 }
 #endif //FDP_SIMULATOR
 
@@ -274,7 +281,8 @@ static inline void check_and_refill_write_credit(struct conv_ftl *conv_ftl)
 }
 
 #ifdef FDP_SIMULATOR
-static void fdp_foreground_gc(struct fdp_ftl *fdp_ftl);
+static void fdp_foreground_gc(struct fdp_ftl *fdp_ftl, int phnd_id);
+static void fdp_per_reclaim_group_gc(struct fdp_ftl *fdp_ftl, int phnd_id);
 
 /**
  * fdp_check_and_refill_write_credit - Check and refill write credits for flow control.
@@ -289,13 +297,31 @@ static void fdp_foreground_gc(struct fdp_ftl *fdp_ftl);
  * This mechanism helps manage write operations by ensuring that sufficient write credits
  * are available, triggering garbage collection to reclaim space when necessary.
  */
-static inline void fdp_check_and_refill_write_credit(struct fdp_ftl *fdp_ftl)
+static inline void fdp_check_and_refill_write_credit(struct fdp_ftl *fdp_ftl, int ruh_id)
 {
+	/*
 	struct write_flow_control *wfc = &(fdp_ftl->wfc);
 	if (wfc->write_credits <= 0) {
-		fdp_foreground_gc(fdp_ftl);
-
+		fdp_foreground_gc(fdp_ftl, ruh_id);
 		wfc->write_credits += wfc->credits_to_refill;
+		return;
+	}
+	*/
+
+	/*
+	struct write_flow_control *ruh_wfc = &(fdp_ftl->phndls->phnd[ruh_id].wfc);
+	if (ruh_wfc->write_credits <= 0) {
+		fdp_foreground_gc(fdp_ftl, ruh_id);
+		ruh_wfc->write_credits += ruh_wfc->credits_to_refill;
+		return;
+	}
+	*/
+
+	struct write_flow_control *ruh_wfc = &(fdp_ftl->phndls->phnd[ruh_id].wfc);
+	if (ruh_wfc->write_credits <= 0) {
+		fdp_per_reclaim_group_gc(fdp_ftl, ruh_id);
+		ruh_wfc->write_credits += ruh_wfc->credits_to_refill;
+		return;
 	}
 }
 
@@ -580,7 +606,7 @@ static void init_reclaim_group(struct fdp_ftl *fdp_ftl)
 		int j;
 
 		rgm->id = i;
-		rgm->tt_ru = RU_PER_RG + 4;  // Allocate additional reclaim unit 
+		rgm->tt_ru = RU_PER_RG;  // Allocate additional reclaim unit 
 		rgm->ch = i % CH_PER_FTL;
 		rgm->lun = i / CH_PER_FTL;
 
@@ -588,9 +614,17 @@ static void init_reclaim_group(struct fdp_ftl *fdp_ftl)
 		INIT_LIST_HEAD(&rgm->free_ru_list);
 		INIT_LIST_HEAD(&rgm->full_ru_list);
 		// Need for fix
-		rgm->victim_ru_pq = pqueue_init(rgm->tt_ru, victim_ru_cmp_pri, victim_ru_get_pri,
-						 victim_ru_set_pri, victim_ru_get_pos,
-						 victim_ru_set_pos);
+		rgm->victim_ru_pq = kmalloc(sizeof(pqueue_t) * spp->nphndls,GFP_KERNEL);
+		rgm->victim_ru_cnt = kmalloc(sizeof(uint32_t) * spp->nphndls,GFP_KERNEL);
+		int p_idx;
+
+		for (p_idx = 0; p_idx < spp->nphndls; p_idx++) {
+			rgm->victim_ru_pq[p_idx] = pqueue_init(rgm->tt_ru, victim_ru_cmp_pri, victim_ru_get_pri,
+							 victim_ru_set_pri, victim_ru_get_pos,
+							 victim_ru_set_pos);
+			rgm->victim_ru_cnt[p_idx] = 0;
+		}
+		
 		// Need for fix
 		rgm->free_ru_cnt = 0;
 		for (j = 0; j < rgm->tt_ru; j++) {
@@ -635,7 +669,6 @@ static void init_reclaim_group(struct fdp_ftl *fdp_ftl)
 		}
 
 		NVMEV_ASSERT(rgm->free_ru_cnt == rgm->tt_ru);
-		rgm->victim_ru_cnt = 0;
 		rgm->full_ru_cnt = 0;
 	}
 }
@@ -650,10 +683,20 @@ static void init_reclaim_group(struct fdp_ftl *fdp_ftl)
  */
 static void remove_reclaim_group(struct fdp_ftl *fdp_ftl)
 {
+	struct ssdparams *spp = &fdp_ftl->ssd->sp;
+
 	int i;
 	for (i = 0; i < RG_PER_FTL; i++) {
 		struct reclaim_group_mgmt *rgm = &fdp_ftl->rgm[i];
-		pqueue_free(rgm->victim_ru_pq);
+		int p_idx;
+
+		for (p_idx = 0; p_idx < spp->nphndls; p_idx++) {
+			pqueue_free(rgm->victim_ru_pq[p_idx]);
+		}
+
+		kfree(rgm->victim_ru_pq);
+		kfree(rgm->victim_ru_cnt);
+
 		vfree(rgm->ru_entries);
 	}
 }
@@ -702,11 +745,24 @@ static void init_lines(struct conv_ftl *conv_ftl)
 
 static void init_fdp_write_flow_control(struct fdp_ftl *fdp_ftl)
 {
+
 	struct write_flow_control *wfc = &(fdp_ftl->wfc);
 	struct ssdparams *spp = &fdp_ftl->ssd->sp;
 
-	wfc->write_credits = spp->pgs_per_line;
-	wfc->credits_to_refill = spp->pgs_per_line;
+	wfc->write_credits = spp->pgs_per_line * 4;
+	wfc->credits_to_refill = spp->pgs_per_line * 4;
+
+
+	struct placement_handle_list *phndls = fdp_ftl->phndls;
+	int nphndls = phndls->nphndls;
+
+	int p_idx;
+	for (p_idx = 0; p_idx < nphndls; p_idx++) {
+		struct write_flow_control *wfc = &(phndls->phnd[p_idx].wfc);
+		wfc->write_credits = spp->pgs_per_line * 4;
+		wfc->credits_to_refill = spp->pgs_per_line * 4;
+	}
+
 }
 
 
@@ -1054,9 +1110,7 @@ static void rotate_ruh_next_ru_pointer(struct reclaim_unit_handle *ruh, uint32_t
 	struct reclaim_unit *rup = __get_ruh_ru(ruh, io_type);
 
 	rup->ruamw -= 512;
-	if (io_type == USER_IO) {
-		*ru_idx = (*ru_idx + 1) % RG_PER_FTL;
-	}
+	*ru_idx = (*ru_idx + 1) % RG_PER_FTL;
 
 }
 
@@ -1132,8 +1186,8 @@ static void advance_fdp_ru_pointer(struct fdp_ftl *fdp_ftl, uint32_t phnd_id, ui
 		NVMEV_ASSERT(rup->vpc >= 0 && rup->vpc < spp->pgs_per_ru);
 		/* there must be some invalid pages in this line */
 		NVMEV_ASSERT(rup->ipc > 0);
-		pqueue_insert(rgm->victim_ru_pq, rup);
-		rgm->victim_ru_cnt++;
+		pqueue_insert(rgm->victim_ru_pq[phnd_id], rup);
+		rgm->victim_ru_cnt[phnd_id]++;
 		// NVMEV_INFO("[NoFreeLine] %s() victim_ru_cnt++ %d\n", __func__, rgm->victim_ru_cnt);
 	}
 
@@ -1427,6 +1481,7 @@ static void fdp_init_ftl(struct fdp_ftl *fdp_ftl, int ftl_id, struct fdpparams *
 	int i, j;
 
 	fdp_ftl->id = ftl_id;
+	fdp_ftl->gc_rg_id = 0;
 
 	/*copy convparams*/
 	fdp_ftl->fp = *fpp;
@@ -1553,8 +1608,8 @@ static void conv_init_params(struct convparams *cpp)
 static void fdp_init_params(struct fdpparams *fpp)
 {
 	fpp->op_area_pcent = OP_AREA_PERCENT;
-	fpp->gc_thres_ru = 8; /* Need only two lines.(host write, gc)*/
-	fpp->gc_thres_ru_high = 8; /* Need only two lines.(host write, gc)*/
+	fpp->gc_thres_ru = 32; /* Need only two lines.(host write, gc)*/
+	fpp->gc_thres_ru_high = 32; /* Need only two lines.(host write, gc)*/
 	fpp->enable_gc_delay = 1;
 	fpp->pba_pcent = (int)((1 + fpp->op_area_pcent) * 100);
 }
@@ -1888,6 +1943,12 @@ static void fdp_mark_page_valid(struct fdp_ftl *fdp_ftl, struct ppa *ppa, int wh
 
 	/* update corresponding block status */
 	blk = get_blk(fdp_ftl->ssd, ppa);
+	if (blk == NULL) {
+		NVMEV_ERROR("%s: blk is NULL \n", __func__);
+	}
+	if (blk->vpc < 0 || blk->vpc >= spp->pgs_per_blk) {
+		NVMEV_ERROR("%s: valid page out of range \n", __func__);
+	}
 	NVMEV_ASSERT(blk->vpc >= 0 && blk->vpc < spp->pgs_per_blk);
 	blk->vpc++;
 
@@ -1903,6 +1964,27 @@ static void fdp_mark_page_valid(struct fdp_ftl *fdp_ftl, struct ppa *ppa, int wh
 	}
 	NVMEV_ASSERT(ru->vpc >= 0 && ru->vpc < spp->pgs_per_ru);
 	ru->vpc++;
+}
+
+static void fdp_mark_block_free(struct fdp_ftl *fdp_ftl, struct ppa *ppa)
+{
+	struct ssdparams *spp = &fdp_ftl->ssd->sp;
+	struct nand_block *blk = get_blk(fdp_ftl->ssd, ppa);
+	struct nand_page *pg = NULL;
+	int i;
+
+	for (i = 0; i < spp->pgs_per_blk; i++) {
+		/* reset page status */
+		pg = &blk->pg[i];
+		NVMEV_ASSERT(pg->nsecs == spp->secs_per_pg);
+		pg->status = PG_FREE;
+	}
+
+	/* reset block status */
+	NVMEV_ASSERT(blk->npgs == spp->pgs_per_blk);
+	blk->ipc = 0;
+	blk->vpc = 0;
+	blk->erase_cnt++;
 }
 #endif //FDP_SIMULATOR
 
@@ -1981,7 +2063,7 @@ static void mark_placement_page_invalid(struct fdp_ftl *fdp_ftl, int phnd_id, st
 
 	if (ru->pos) {
 		/* Note that line->vpc will be updated by this call */
-		pqueue_change_priority(rgm->victim_ru_pq, ru->vpc - 1, ru);
+		pqueue_change_priority(rgm->victim_ru_pq[ru->ruh_id], ru->vpc - 1, ru);
 	} else {
 		ru->vpc--;
 	}
@@ -1989,8 +2071,8 @@ static void mark_placement_page_invalid(struct fdp_ftl *fdp_ftl, int phnd_id, st
 	if (was_full_ru) {
 		list_del_init(&ru->entry);
 		rgm->full_ru_cnt--;
-		pqueue_insert(rgm->victim_ru_pq, ru);
-		rgm->victim_ru_cnt++;
+		pqueue_insert(rgm->victim_ru_pq[ru->ruh_id], ru);
+		rgm->victim_ru_cnt[ru->ruh_id]++;
 	}
 }
 
@@ -2109,13 +2191,13 @@ static uint64_t fdp_gc_write_page(struct fdp_ftl *fdp_ftl, uint32_t ruh_id, int 
 	return 0;
 }
 
-static struct reclaim_unit *select_victim_ru(struct fdp_ftl *fdp_ftl, int gc_rg_idx, bool force)
+static struct reclaim_unit *select_victim_ru(struct fdp_ftl *fdp_ftl, int gc_rg_idx, int phnd_id, bool force)
 {
 	struct ssdparams *spp = &fdp_ftl->ssd->sp;
 	struct reclaim_group_mgmt *rgm = &fdp_ftl->rgm[gc_rg_idx];
 	struct reclaim_unit *victim_ru = NULL;
 
-	victim_ru = pqueue_peek(rgm->victim_ru_pq);
+	victim_ru = pqueue_peek(rgm->victim_ru_pq[phnd_id]);
 	if (!victim_ru) {
 		NVMEV_INFO("[NoFreeRU] %s() victim_ru_pq is NULL \n", __func__);
 		return NULL;
@@ -2127,14 +2209,15 @@ static struct reclaim_unit *select_victim_ru(struct fdp_ftl *fdp_ftl, int gc_rg_
 		return NULL;
 	}
 
-	pqueue_pop(rgm->victim_ru_pq);
+	pqueue_pop(rgm->victim_ru_pq[phnd_id]);
 	victim_ru->pos = 0;
-	rgm->victim_ru_cnt--;
+	rgm->victim_ru_cnt[phnd_id]--;
 	//NVMEV_INFO("[NoFreeLine] %s() victim_line_cnt-- %d\n", __func__,lm->victim_line_cnt);
 
 	/* victim_line is a danggling node now */
 	return victim_ru;
 }
+
 #endif //FDP_SIMULATOR
 
 static struct line *select_victim_line(struct conv_ftl *conv_ftl, bool force)
@@ -2420,7 +2503,7 @@ static void foreground_gc(struct conv_ftl *conv_ftl)
 }
 
 #ifdef FDP_SIMULATOR
-static int fdp_do_gc(struct fdp_ftl *fdp_ftl, int rg_id, bool force)
+static int fdp_do_gc(struct fdp_ftl *fdp_ftl, int rg_id, int phnd_id, bool force)
 {
 	/* For retrieving reclaim group with round-robine manner*/
 
@@ -2433,7 +2516,7 @@ static int fdp_do_gc(struct fdp_ftl *fdp_ftl, int rg_id, bool force)
 
 	int flashpg;
 
-	victim_ru = select_victim_ru (fdp_ftl, rg_id, force);
+	victim_ru = select_victim_ru (fdp_ftl, rg_id, phnd_id, force);
 	rgm = &fdp_ftl->rgm[rg_id];
 
 
@@ -2444,14 +2527,15 @@ static int fdp_do_gc(struct fdp_ftl *fdp_ftl, int rg_id, bool force)
 	}
 
 	NVMEV_INFO("GC-ing fdp_ftl %d phnd %d rg_id %d ru %d ipc %d(%d) victim %d full %d free %d \n", 
-				fdp_ftl->id, victim_ru->ruh_id, rg_id, victim_ru->id, victim_ru->ipc, victim_ru->vpc, rgm->victim_ru_cnt, 
+				fdp_ftl->id, victim_ru->ruh_id, rg_id, victim_ru->id, victim_ru->ipc, victim_ru->vpc, rgm->victim_ru_cnt[phnd_id], 
 				rgm->full_ru_cnt, rgm->free_ru_cnt);
 
 #ifdef WAF
 	fdp_ftl->ns->write_volume_gc += victim_ru->vpc;
 	fdp_ftl->ns->total_write_volume_gc += victim_ru->vpc;
 #endif //WAF
-	fdp_ftl->wfc.credits_to_refill = victim_ru->ipc;
+	struct write_flow_control *ruh_wfc = &(fdp_ftl->phndls->phnd[phnd_id].wfc);
+	ruh_wfc->credits_to_refill = victim_ru->ipc;
 
 	while (victim_ru->ulc > 0) {
 		victim_line = list_first_entry_or_null(&victim_ru->ru_line_list, 
@@ -2459,13 +2543,11 @@ static int fdp_do_gc(struct fdp_ftl *fdp_ftl, int rg_id, bool force)
 
 		ppa.g.blk = victim_line->id;
 
-
 		/*
 		NVMEV_INFO("GC-ing line:%d ipc=%d(%d) victim=%d full=%d free=%d\n", 
 				ppa.g.blk, victim_line->ipc, victim_line->vpc, fdp_ftl->lm.victim_line_cnt,
 				fdp_ftl->lm.full_line_cnt, fdp_ftl->lm.free_line_cnt);
 		*/
-
 
 		/* copy back valid data */
 		for (flashpg = 0; flashpg < spp->flashpgs_per_blk; flashpg++) {
@@ -2482,7 +2564,7 @@ static int fdp_do_gc(struct fdp_ftl *fdp_ftl, int rg_id, bool force)
 			if (flashpg == (spp->flashpgs_per_blk - 1)) {
 				struct fdpparams *fpp = &fdp_ftl->fp;
 
-				mark_block_free((struct conv_ftl *) fdp_ftl, &ppa);
+				fdp_mark_block_free(fdp_ftl, &ppa);
 
 				if (fpp->enable_gc_delay) {
 					struct nand_cmd gce = {
@@ -2510,18 +2592,32 @@ static int fdp_do_gc(struct fdp_ftl *fdp_ftl, int rg_id, bool force)
 	return 0;
 }
 
-static void fdp_foreground_gc(struct fdp_ftl *fdp_ftl)
+
+static void fdp_foreground_gc(struct fdp_ftl *fdp_ftl, int phnd_id)
 {
 	int rg_id;
 	for (rg_id = 0; rg_id < RG_PER_FTL; rg_id++) {
 		if (fdp_should_gc_high(fdp_ftl, rg_id)) {
 			NVMEV_DEBUG_VERBOSE("should_gc_high passed");
 			/* perform GC here until !should_gc(conv_ftl) */
-			fdp_do_gc(fdp_ftl, rg_id, true);
+			fdp_do_gc(fdp_ftl, rg_id, phnd_id, true);
 			//NVMEV_INFO("[NoFreeLine] %s <- do_gc() : %d\n", __func__, ret);
 		}
 	}
 }
+
+static void fdp_per_reclaim_group_gc(struct fdp_ftl *fdp_ftl, int phnd_id)
+{
+	int rg_id = fdp_ftl->gc_rg_id;
+	if (fdp_should_gc_high(fdp_ftl, rg_id)) {
+		NVMEV_DEBUG_VERBOSE("should_gc_high passed");
+		/* perform GC here until !should_gc(conv_ftl) */
+		fdp_do_gc(fdp_ftl, rg_id, phnd_id, true);
+		//NVMEV_INFO("[NoFreeLine] %s <- do_gc() : %d\n", __func__, ret);
+	}
+	fdp_ftl->gc_rg_id = (rg_id + 1) % RG_PER_FTL;
+}
+
 #endif //FDP_SIMULATOR
 
 static bool is_same_flash_page(struct conv_ftl *conv_ftl, struct ppa ppa1, struct ppa ppa2)
@@ -2953,7 +3049,8 @@ static bool fdp_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
 		}
 
 		fdp_consume_write_credit(fdp_ftl);
-		fdp_check_and_refill_write_credit(fdp_ftl);
+		fdp_consume_write_credit_per_ruh(fdp_ftl, dspec);
+		fdp_check_and_refill_write_credit(fdp_ftl, dspec);
 	}
 
 	if ((cmd->rw.control & NVME_RW_FUA) || (spp->write_early_completion == 0)) {

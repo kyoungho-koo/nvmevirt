@@ -94,12 +94,12 @@ struct reclaim_group_mgmt {
 
 	/* free line list, we only need to maintain a list of blk numbers */
 	struct list_head free_ru_list;
-	pqueue_t *victim_ru_pq;
+	pqueue_t **victim_ru_pq;
 	struct list_head full_ru_list;
 
 	uint32_t tt_ru;
 	uint32_t free_ru_cnt;
-	uint32_t victim_ru_cnt;
+	uint32_t *victim_ru_cnt;
 	uint32_t full_ru_cnt;
 };
 
@@ -156,6 +156,7 @@ struct reclaim_unit_handle {
 
 struct placement_handle {
 	int id;
+	struct write_flow_control wfc;
 	struct reclaim_unit_handle *ruh;
 };
 
@@ -191,6 +192,7 @@ struct fdp_ftl {
 	struct write_flow_control wfc;
 	int		id;
 
+	int gc_rg_id;
 	struct reclaim_group_mgmt rgm[RG_PER_FTL];
 	struct placement_handle_list *phndls;
 };
