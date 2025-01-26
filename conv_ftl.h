@@ -65,8 +65,8 @@ struct line_mgmt {
 
 
 struct write_flow_control {
-	uint32_t write_credits;
-	uint32_t credits_to_refill;
+	int32_t write_credits;
+	int32_t credits_to_refill;
 };
 
 
@@ -101,6 +101,7 @@ struct reclaim_group_mgmt {
 	uint32_t free_ru_cnt;
 	uint32_t victim_ru_cnt;
 	uint32_t full_ru_cnt;
+	uint32_t ref_cnt;
 };
 
 struct ru_params {
@@ -125,6 +126,7 @@ struct reclaim_unit {
 	size_t pos;
 	
 
+	int is_victim;
 	uint32_t ref_cnt;
 	uint32_t rg_id;
 	uint32_t ruh_id;
