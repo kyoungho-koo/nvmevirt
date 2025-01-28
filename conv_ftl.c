@@ -338,7 +338,7 @@ static void init_reclaim_group(struct fdp_ftl *fdp_ftl)
 		struct line *line;
 		int j;
 
-		rgm->tt_ru = RU_PER_RG + 32;  // Allocate additional reclaim unit 
+		rgm->tt_ru = RU_PER_RG;  // Allocate additional reclaim unit 
 		rgm->ru_entries = vmalloc(sizeof(struct reclaim_unit) * rgm->tt_ru);
 		INIT_LIST_HEAD(&rgm->free_ru_list);
 		INIT_LIST_HEAD(&rgm->full_ru_list);

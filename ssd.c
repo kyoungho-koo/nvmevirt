@@ -101,7 +101,7 @@ struct nvmev_ns_host_sw_specified *host_spec)
 	spp->fdp_enabled = 1;
 	spp->nphndls = host_spec->nphndls;
 	spp->ru_nchs = RU_CHANNELS;
-	spp->lines_per_ru = 8;
+	spp->lines_per_ru = 1;
 
 	NVMEV_ASSERT((ONESHOT_PAGE_SIZE % spp->pgsz) == 0 && (FLASH_PAGE_SIZE % spp->pgsz) == 0);
 	NVMEV_ASSERT((ONESHOT_PAGE_SIZE % FLASH_PAGE_SIZE) == 0);

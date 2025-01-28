@@ -61,7 +61,7 @@ static unsigned int __do_perform_io(int sqid, int sq_entry)
 	offset = __cmd_io_offset(cmd);
 	length = __cmd_io_size(cmd);
 	remaining = length;
-#ifdef FDP_SIMULATOR
+#ifdef FDP_SIMULATOR_VERIFY
 	uint32_t dspec = 0;
 
 	if (cmd->opcode == nvme_cmd_write) {
@@ -109,7 +109,7 @@ static unsigned int __do_perform_io(int sqid, int sq_entry)
 
 		if (cmd->opcode == nvme_cmd_write ||
 		    cmd->opcode == nvme_cmd_zone_append) {
-#ifdef FDP_SIMULATOR
+#ifdef FDP_SIMULATOR_VERIFY
 			//NVMEV_INFO("[FDP_SIMULATOR] %s() vaddr: 0x%p mem_offs: %p 
 			//       nvmev_vdev->ns[nsid: %d].mapped 0x%p offset: %d io_size: %d\n",
 			//		__func__, vaddr, mem_offs, nsid, nvmev_vdev->ns[nsid].mapped, offset, io_size);
