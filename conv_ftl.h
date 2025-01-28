@@ -92,6 +92,9 @@ struct reclaim_group_mgmt {
 	int ch;
 	int lun;
 
+	int ipc;
+	int vpc;
+
 	/* free line list, we only need to maintain a list of blk numbers */
 	struct list_head free_ru_list;
 	pqueue_t **victim_ru_pq;
