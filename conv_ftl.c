@@ -1146,6 +1146,7 @@ skip_ru:
 
 
 	rup->ref_cnt--;
+	rgm->ref_cnt--;
 	if (rup->vpc == spp->pgs_per_ru) {
 		/* all pgs are still valid, move to full line list */
 		NVMEV_ASSERT(rup->ipc == 0);
@@ -1161,9 +1162,11 @@ skip_ru:
 		rup->is_victim = 1;
 		rgm->victim_ru_cnt++;
 
+		/*
 		NVMEV_INFO("%s: fdp_ftl %d phnd %d rg_id %d ch %d lun %d ru %d ipc %d(%d) victim %d full %d free %d is_victim %d ref_cnt %d\n", 
 					__func__, fdp_ftl->id, rup->ruh_id, rup->rg_id, rup->ch, rup->lun, rup->id, rup->ipc, rup->vpc, rgm->victim_ru_cnt, 
 					rgm->full_ru_cnt, rgm->free_ru_cnt, rup->is_victim, rup->ref_cnt);
+					*/
 
 		NVMEV_ASSERT(rup->ipc + rup->vpc == spp->pgs_per_ru);
 		
@@ -1177,7 +1180,6 @@ skip_ru:
 	struct reclaim_unit **rupp = __get_ruh_rupp(ruh, io_type);
 	//int free_check = *ru_idx;
 //retry:
-	rgm->ref_cnt--;
 	*rupp = get_next_free_ru(fdp_ftl, ruh, *ru_idx, io_type);
 
 	if (*rupp == NULL) {
@@ -1410,14 +1412,12 @@ static void init_fdp_placement(struct fdp_ftl *fdp_ftl)
 			// Initialize Reclaim Unit Handle
 			ruh->ru[rg_idx] = get_next_free_ru(fdp_ftl, ruh, rg_idx, -1);
 			ruh->ru[rg_idx]->ruh_id = p_idx;
-			ruh->ru[rg_idx]->ref_cnt++;
 		}
 
 		for (rg_idx = 0; rg_idx < RG_PER_FTL; rg_idx++) {
 			// Initialize Reclaim Unit Handle
 			ruh->gc_ru[rg_idx] = get_next_free_ru(fdp_ftl, ruh, rg_idx, -2);
 			ruh->gc_ru[rg_idx]->ruh_id = p_idx;
-			ruh->gc_ru[rg_idx]->ref_cnt++;
 		}
 
 		phndls->phnd[p_idx].ruh = ruh;
