@@ -27,6 +27,7 @@
  * in Makefile */
 
 #if (BASE_SSD == INTEL_OPTANE)
+#define NR_ENDURANCEGROUPS 1
 #define NR_NAMESPACES 1
 
 #define NS_SSD_TYPE_0 SSD_TYPE_NVM
@@ -65,13 +66,12 @@ enum {
 #define NR_NAMESPACES 1
 
 
-
 #define NS_SSD_TYPE_0 SSD_TYPE_CONV
 #define NS_CAPACITY_0 (0)
 #define NS_SSD_TYPE_1 NS_SSD_TYPE_0
 #define NS_CAPACITY_1 (0)
 #define MDTS (6)
-#define CELL_MODE (CELL_MODE_MLC)
+#define CELL_MODE (CELL_MODE_SLC)
 
 #define SSD_PARTITIONS (4)
 #define NAND_CHANNELS (8)

@@ -221,6 +221,59 @@ static void __nvmev_admin_get_log_page(int eid)
 		__memcpy(page, &effects_log, len);
 		break;
 	}
+	case NVME_LOG_FDP_CONFIG: {
+		struct nvmev_admin_queue *queue = nvmev_vdev->admin_q;
+		struct nvmev_placement_handle_list *phndls = nvmev_vdev->ns->eg->phndls;
+
+		uint16_t nruh = 0;
+
+		if (phndls == NULL) {
+			NVMEV_ERROR("placement handle list is NULL\n");
+		} else {
+			nruh = phndls->nphndls;
+		}
+
+		/*
+		uint16_t desc_size = sizeof(struct nvme_fdp_config_descriptor) + 
+			nruh * sizeof(struct nvme_fdp_reclaim_unit_handle_desc);
+		uint32_t log_size = sizeof(struct nvme_fdp_config_log) + desc_size;
+
+		uint8_t *buffer = calloc(1, log_size);
+
+		struct nvme_fdp_config_log *log = (struct nvme_fdp_config_log *)buffer;
+		log->num_fdp_config = cpu_to_le16(1);
+		log->version = 0;
+		log->version = 0;
+		*/
+
+
+		struct nvme_fdp_config_descriptor desc = {
+			.desc_size = 0,
+			.fdpa = 0,
+			.vss = 0,
+			.nrg = cpu_to_le32(RECLAIM_GROUPS),
+			.nruh = cpu_to_le16(nruh),
+			.maxpids = cpu_to_le16(4),
+			.nns = cpu_to_le32(1),
+			.runs = cpu_to_le64(RU_PER_RG * RECLAIM_GROUPS),
+			.erutl = cpu_to_le32(60),
+			.rsvd = { 0, },
+		};
+
+		struct nvme_fdp_config_log fdp_config_log = {
+			.num_fdp_config = cpu_to_le16(1),
+			.version = 0,
+			.rsvd3 = 0,
+			.size = cpu_to_le32(sizeof(fdp_config_log)),
+			.rsvd7 = { 0, },
+			.desc_data = { 0,},
+		};
+
+		__memcpy(&fdp_config_log.desc_data ,&desc, sizeof(struct nvme_fdp_config_descriptor));
+
+		__memcpy(page, &fdp_config_log, len);
+		break;
+	}
 	default:
 		/*
 		 * The NVMe protocol mandates several commands (lid) to be implemented, but some

@@ -254,6 +254,37 @@ struct nvme_effects_log {
 	__u8 resv[2048];
 };
 
+struct nvme_fdp_reclaim_unit_handle_desc {
+	__u8 ruht; // Reclaim Unit Handle Type
+	__u8 rsvd[3]; // Reserved
+};
+
+struct nvme_fdp_config_descriptor {
+	__le16 desc_size;		 // Descriptor Size (DSZE)
+	__u8 fdpa;				 // FDP Attributes
+	__u8 vss;				 // Vendor Specific Size
+	__le32 nrg;				 // Number of Reclaim  Groups
+	__le16 nruh;			 // Number of Reclaim Unit Handles
+	__le16 maxpids;          // Max Placement Identifiers
+    __le32 nns;              // Number of Namespaces Supported
+    __le64 runs;             // Reclaim Unit Nominal Size
+    __le32 erutl;            // Estimated Reclaim Unit Time Limit
+    __u8   rsvd[36];         // Reserved (to align to 64B)
+    
+    struct nvme_fdp_reclaim_unit_handle_desc ru_descs[];  // [nruh]
+    // __u8 vendor_specific[vss];                        // [vss]
+    // __u8 pad[];                                       // padding to 8B boundary
+};
+
+struct nvme_fdp_config_log {
+	__le16 num_fdp_config;
+	__u8 version;
+	__u8 rsvd3;
+	__le32 size;
+	__u8 rsvd7[8];
+	__u8 desc_data[4080];
+};
+
 enum {
 	NVME_SMART_CRIT_SPARE = 1 << 0,
 	NVME_SMART_CRIT_TEMPERATURE = 1 << 1,
@@ -603,6 +634,10 @@ enum {
 	NVME_LOG_TELEMETRY_CTRL = 0x08,
 	NVME_LOG_ENDURANCE_GROUP = 0x09,
 	NVME_LOG_ANA = 0x0c,
+	NVME_LOG_FDP_CONFIG = 0x20,
+	NVME_LOG_RUH = 0x21,
+	NVME_LOG_FDP_STAT = 0x22,
+	NVME_LOG_FDP_EVENT = 0x23,
 	NVME_LOG_DISC = 0x70,
 	NVME_LOG_RESERVATION = 0x80,
 	NVME_FWACT_REPL = (0 << 3),
